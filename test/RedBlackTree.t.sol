@@ -105,8 +105,12 @@ contract RedBlackTreeLibTest is SoladyTest {
             bool exists = !ptr.isEmpty();
             if (exists) {
                 assertEq(ptr.value(), choice);
+                _brutalizeScratchSpace();
                 ptr.remove();
-                if (_random() % 4 == 0) tree.tryRemove(choice);
+                if (_random() % 4 == 0) {
+                    _brutalizeScratchSpace();
+                    tree.tryRemove(choice);
+                }
                 assertTrue(tree.find(choice).isEmpty());
                 assertFalse(tree.exists(choice));
             }
@@ -114,8 +118,12 @@ contract RedBlackTreeLibTest is SoladyTest {
                 _testRemoveAndInsertBack(a, n, t - 1);
             }
             if (exists) {
+                _brutalizeScratchSpace();
                 tree.insert(choice);
-                if (_random() % 4 == 0) tree.tryInsert(choice);
+                if (_random() % 4 == 0) {
+                    _brutalizeScratchSpace();
+                    tree.tryInsert(choice);
+                }
                 assertFalse(tree.find(choice).isEmpty());
                 assertTrue(tree.exists(choice));
             }
@@ -183,6 +191,7 @@ contract RedBlackTreeLibTest is SoladyTest {
         unchecked {
             uint256 m = n < 8 ? 4 : n;
             for (uint256 i; i != n; ++i) {
+                _brutalizeScratchSpace();
                 tree.remove(a[i]);
                 assertEq(tree.size(), n - i - 1);
                 if (_random() % m == 0) {
@@ -221,11 +230,13 @@ contract RedBlackTreeLibTest is SoladyTest {
                 bytes32 ptr = tree.find(r);
                 if (mode == 0) {
                     if (ptr.isEmpty()) {
+                        _brutalizeScratchSpace();
                         tree.insert(r);
                         _addToArray(records, r);
                     }
                 } else {
                     if (!ptr.isEmpty()) {
+                        _brutalizeScratchSpace();
                         tree.remove(r);
                         _removeFromArray(records, r);
                     }
@@ -306,6 +317,7 @@ contract RedBlackTreeLibTest is SoladyTest {
         unchecked {
             uint256 m = type(uint256).max;
             for (uint256 i; i < 256; ++i) {
+                _brutalizeScratchSpace();
                 tree.insert(m - i);
                 assertEq(tree.size(), i + 1);
             }
@@ -322,6 +334,7 @@ contract RedBlackTreeLibTest is SoladyTest {
             bytes32[] memory ptrs = new bytes32[](256);
             for (uint256 i; i < 256; ++i) {
                 bytes32 ptr = tree.find(m - i);
+                _brutalizeScratchSpace();
                 ptr.remove();
                 assertTrue(ptr.value() != m - i);
                 ptrs[i] = ptr;
@@ -330,11 +343,83 @@ contract RedBlackTreeLibTest is SoladyTest {
             for (uint256 i; i < 256; ++i) {
                 assertEq(ptrs[i].value(), 0);
                 vm.expectRevert(RedBlackTreeLib.PointerOutOfBounds.selector);
+                _brutalizeScratchSpace();
                 ptrs[i].remove();
             }
             for (uint256 i; i < 256; ++i) {
+                _brutalizeScratchSpace();
                 tree2.remove(i + 1);
                 assertEq(tree2.size(), 256 - (i + 1));
+            }
+        }
+    }
+
+    function testRedBlackTreeInsertOneGas() public {
+        unchecked {
+            for (uint256 i; i != 1; ++i) {
+                tree.insert(i + 1);
+            }
+        }
+    }
+
+    function testRedBlackTreeInsertTwoGas() public {
+        unchecked {
+            for (uint256 i; i != 2; ++i) {
+                tree.insert(i + 1);
+            }
+        }
+    }
+
+    function testRedBlackTreeInsertThreeGas() public {
+        unchecked {
+            for (uint256 i; i != 3; ++i) {
+                tree.insert(i + 1);
+            }
+        }
+    }
+
+    function testRedBlackTreeInsertTenGas() public {
+        unchecked {
+            for (uint256 i; i != 10; ++i) {
+                tree.insert(i + 1);
+            }
+        }
+    }
+
+    function testRedBlackTreeValues() public {
+        testRedBlackTreeValues(3);
+    }
+
+    function testRedBlackTreeValues(uint256 n) public {
+        unchecked {
+            n = n & 7;
+            while (true) {
+                uint256[] memory values = new uint256[](n);
+                for (uint256 i; i != n; ++i) {
+                    values[i] = 1 | _random();
+                    _brutalizeScratchSpace();
+                    tree.tryInsert(values[i]);
+                }
+                LibSort.sort(values);
+                LibSort.uniquifySorted(values);
+                uint256[] memory retrieved = tree.values();
+                _checkMemory();
+                assertEq(retrieved, values);
+                n = values.length;
+                if (_random() & 1 == 0) {
+                    LibPRNG.PRNG memory prng = LibPRNG.PRNG(_random());
+                    prng.shuffle(values);
+                    for (uint256 i; i != n; ++i) {
+                        _brutalizeScratchSpace();
+                        tree.tryRemove(values[i]);
+                    }
+                    assertEq(tree.values(), new uint256[](0));
+                    if (_random() & 1 == 0) {
+                        n += _random() & 15;
+                        continue;
+                    }
+                }
+                break;
             }
         }
     }
@@ -374,36 +459,6 @@ contract RedBlackTreeLibTest is SoladyTest {
         assertEq(tree.size(), 1);
         tree.tryRemove(2);
         assertEq(tree.size(), 1);
-    }
-
-    function testRedBlackTreeClear() public {
-        tree.tryInsert(1);
-        tree.tryInsert(2);
-        bytes32 ptr1 = tree.find(1);
-        bytes32 ptr2 = tree.find(2);
-        assertEq(tree.size(), 2);
-        tree.clear();
-        assertEq(tree.size(), 0);
-        assertEq(ptr1.value(), 0);
-        assertEq(ptr2.value(), 0);
-    }
-
-    function testRedBlackTreeClear(uint256) public {
-        unchecked {
-            uint256 n = _random() % (_random() % 128 == 0 ? 32 : 8);
-            uint256[] memory a = _fillTree(n);
-
-            bytes32[] memory ptrs = new bytes32[](n);
-            for (uint256 i; i != n; ++i) {
-                ptrs[i] = tree.find(a[i]);
-                assertTrue(ptrs[i].value() != 0);
-            }
-            tree.clear();
-            assertEq(tree.size(), 0);
-            for (uint256 i; i != n; ++i) {
-                assertEq(ptrs[i].value(), 0);
-            }
-        }
     }
 
     function testRedBlackTreeTreeFullReverts() public {
@@ -559,6 +614,7 @@ contract RedBlackTreeLibTest is SoladyTest {
                 uint256 r = _bound(_random(), 1, type(uint256).max);
                 if (tree.find(r).isEmpty()) {
                     a[i++] = r;
+                    _brutalizeScratchSpace();
                     tree.insert(r);
                 }
                 if (_random() % 4 == 0) {

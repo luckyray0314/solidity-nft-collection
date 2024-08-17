@@ -18,6 +18,9 @@ out/
 # Ignore all vscode settings
 .vscode/
 
+# Ignore all jetbrain settings
+.idea/
+
 # Ignore flattened files
 flattened.txt
 
@@ -27,10 +30,9 @@ broadcast
 lcov.info
 
 # Woke testing
-.woke-build
-.woke-logs
+.wake
 pytypes
 __pycache__/
 *.py[cod]
 .hypothesis/
-woke-coverage.cov
+wake-coverage.cov

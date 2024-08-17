@@ -466,37 +466,32 @@ contract LibStringTest is SoladyTest {
         string memory search = _generateString("abcdefghijklmnopqrstuvwxyz");
         string memory replacement = _generateString("0123456790_-+/=|{}<>!");
         if (bytes(search).length != 0) {
-            string memory subject = string(
-                bytes.concat(
-                    bytes(filler), bytes(search), bytes(filler), bytes(search), bytes(filler)
-                )
-            );
+            string memory subject;
+            subject = LibString.concat(subject, filler);
+            subject = LibString.concat(subject, search);
+            subject = LibString.concat(subject, filler);
+            subject = LibString.concat(subject, search);
+            subject = LibString.concat(subject, filler);
             _misalignFreeMemoryPointer();
-            string memory expectedResult = string(
-                bytes.concat(
-                    bytes(filler),
-                    bytes(replacement),
-                    bytes(filler),
-                    bytes(replacement),
-                    bytes(filler)
-                )
-            );
+            string memory expectedResult;
+            expectedResult = LibString.concat(expectedResult, filler);
+            expectedResult = LibString.concat(expectedResult, replacement);
+            expectedResult = LibString.concat(expectedResult, filler);
+            expectedResult = LibString.concat(expectedResult, replacement);
+            expectedResult = LibString.concat(expectedResult, filler);
             _misalignFreeMemoryPointer();
             string memory replaced = LibString.replace(subject, search, replacement);
             _checkMemory(replaced);
             assertEq(replaced, expectedResult);
         } else {
-            string memory expectedResult = string(
-                bytes.concat(
-                    bytes(replacement),
-                    bytes(" "),
-                    bytes(replacement),
-                    bytes(" "),
-                    bytes(replacement),
-                    bytes(" "),
-                    bytes(replacement)
-                )
-            );
+            string memory expectedResult;
+            expectedResult = LibString.concat(expectedResult, replacement);
+            expectedResult = LibString.concat(expectedResult, " ");
+            expectedResult = LibString.concat(expectedResult, replacement);
+            expectedResult = LibString.concat(expectedResult, " ");
+            expectedResult = LibString.concat(expectedResult, replacement);
+            expectedResult = LibString.concat(expectedResult, " ");
+            expectedResult = LibString.concat(expectedResult, replacement);
             string memory replaced = LibString.replace("   ", search, replacement);
             assertEq(replaced, expectedResult);
         }
@@ -612,6 +607,26 @@ contract LibStringTest is SoladyTest {
         assertEq(LibString.lastIndexOf("a", "bcd", 0), LibString.NOT_FOUND);
         assertEq(LibString.lastIndexOf("accd", "bcd"), LibString.NOT_FOUND);
         assertEq(LibString.lastIndexOf("", "bcd"), LibString.NOT_FOUND);
+    }
+
+    function testContains() public {
+        string memory subject = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
+        assertEq(LibString.contains(subject, "a"), true);
+        assertEq(LibString.contains(subject, "abc"), true);
+        assertEq(LibString.contains(subject, "z"), true);
+        assertEq(LibString.contains(subject, "Z"), true);
+        assertEq(LibString.contains(subject, "az"), false);
+        assertEq(LibString.contains(subject, "aZ"), false);
+        assertEq(LibString.contains(subject, "Aa"), false);
+        assertEq(LibString.contains(subject, "Zz"), false);
+        assertEq(LibString.contains(subject, "abcZ"), false);
+        assertEq(LibString.contains(subject, "abcz"), false);
+        assertEq(LibString.contains(subject, "abcA"), false);
+        assertEq(LibString.contains(subject, "abcB"), false);
+        assertEq(LibString.contains(subject, "abcC"), false);
+        assertEq(LibString.contains(subject, ""), true);
+        assertEq(LibString.contains("", "abc"), false);
+        assertEq(LibString.contains("", ""), true);
     }
 
     function testStringStartsWith(uint256) public brutalizeMemory {
@@ -1048,6 +1063,10 @@ contract LibStringTest is SoladyTest {
             LibString.eqs("12345678901234567890123456789012", "12345678901234567890123456789012")
         );
 
+        assertTrue(LibString.eqs("", hex"0061"));
+        assertTrue(LibString.eqs("a", hex"610061"));
+        assertTrue(LibString.eqs("aa", hex"61610061"));
+
         assertFalse(LibString.eqs("", "x"));
         assertFalse(LibString.eqs("1", "2"));
         assertFalse(LibString.eqs("Hello", "Hehe"));
@@ -1227,6 +1246,52 @@ contract LibStringTest is SoladyTest {
         assertEq(LibString.fromSmallString(bytes32("a")), "a");
         assertEq(LibString.fromSmallString(bytes32("abc")), "abc");
         assertEq(LibString.fromSmallString(bytes32("Hello world!")), "Hello world!");
+    }
+
+    function testNormalizeSmallString() public {
+        bytes32 x;
+        bytes32 y;
+        assertEq(LibString.normalizeSmallString(x), y);
+        x = 0x1100000000000000000000000000000000000000000000000000000000000000;
+        y = 0x1100000000000000000000000000000000000000000000000000000000000000;
+        assertEq(LibString.normalizeSmallString(x), y);
+        x = 0x1100ff0000000000000000000000000000000000000000000000000000000000;
+        y = 0x1100000000000000000000000000000000000000000000000000000000000000;
+        assertEq(LibString.normalizeSmallString(x), y);
+        x = 0x1122ff0000000000000000000000000000000000000000000000000000000000;
+        y = 0x1122ff0000000000000000000000000000000000000000000000000000000000;
+        assertEq(LibString.normalizeSmallString(x), y);
+        x = 0x00000000000000000000000000000000000000000000000000000000000000ff;
+        y = 0x0000000000000000000000000000000000000000000000000000000000000000;
+        assertEq(LibString.normalizeSmallString(x), y);
+        x = 0x00ff0000000000000000000000000000000000000000000000000000000000ff;
+        y = 0x0000000000000000000000000000000000000000000000000000000000000000;
+        assertEq(LibString.normalizeSmallString(x), y);
+    }
+
+    function testNormalizeSmallString(bytes32 x) public {
+        string memory y = LibString.fromSmallString(x);
+        bytes32 normalized = LibString.normalizeSmallString(x);
+        assertEq(LibString.toSmallString(y), normalized);
+        assertTrue(LibString.eqs(y, normalized));
+        assertTrue(LibString.eqs(y, x));
+    }
+
+    function testToSmallString() public {
+        assertEq(LibString.toSmallString(""), "");
+        assertEq(LibString.toSmallString("a"), "a");
+        assertEq(LibString.toSmallString("ab"), "ab");
+        assertEq(LibString.toSmallString("abc"), "abc");
+        assertEq(
+            LibString.toSmallString("1234567890123456789012345678901"),
+            "1234567890123456789012345678901"
+        );
+        assertEq(
+            LibString.toSmallString("12345678901234567890123456789012"),
+            "12345678901234567890123456789012"
+        );
+        vm.expectRevert(LibString.TooBigForSmallString.selector);
+        LibString.toSmallString("123456789012345678901234567890123");
     }
 
     function _lowerOriginal(string memory subject) internal pure returns (string memory result) {

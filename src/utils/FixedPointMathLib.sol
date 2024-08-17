@@ -18,15 +18,22 @@ library FixedPointMathLib {
     /// @dev The operation failed, due to an overflow.
     error RPowOverflow();
 
+    /// @dev The mantissa is too big to fit.
+    error MantissaOverflow();
+
     /// @dev The operation failed, due to an multiplication overflow.
     error MulWadFailed();
 
-    /// @dev The operation failed, either due to a
-    /// multiplication overflow, or a division by a zero.
+    /// @dev The operation failed, due to an multiplication overflow.
+    error SMulWadFailed();
+
+    /// @dev The operation failed, either due to a multiplication overflow, or a division by a zero.
     error DivWadFailed();
 
-    /// @dev The multiply-divide operation failed, either due to a
-    /// multiplication overflow, or a division by a zero.
+    /// @dev The operation failed, either due to a multiplication overflow, or a division by a zero.
+    error SDivWadFailed();
+
+    /// @dev The operation failed, either due to a multiplication overflow, or a division by a zero.
     error MulDivFailed();
 
     /// @dev The division failed, as the denominator is zero.
@@ -38,6 +45,9 @@ library FixedPointMathLib {
 
     /// @dev The output is undefined, as the input is less-than-or-equal to zero.
     error LnWadUndefined();
+
+    /// @dev The input outside the acceptable domain.
+    error OutOfDomain();
 
     /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
     /*                         CONSTANTS                          */
@@ -63,6 +73,36 @@ library FixedPointMathLib {
         }
     }
 
+    /// @dev Equivalent to `(x * y) / WAD` rounded down.
+    function sMulWad(int256 x, int256 y) internal pure returns (int256 z) {
+        /// @solidity memory-safe-assembly
+        assembly {
+            z := mul(x, y)
+            // Equivalent to `require((x == 0 || z / x == y) && !(x == -1 && y == type(int256).min))`.
+            if iszero(gt(or(iszero(x), eq(sdiv(z, x), y)), lt(not(x), eq(y, shl(255, 1))))) {
+                mstore(0x00, 0xedcd4dd4) // `SMulWadFailed()`.
+                revert(0x1c, 0x04)
+            }
+            z := sdiv(z, WAD)
+        }
+    }
+
+    /// @dev Equivalent to `(x * y) / WAD` rounded down, but without overflow checks.
+    function rawMulWad(uint256 x, uint256 y) internal pure returns (uint256 z) {
+        /// @solidity memory-safe-assembly
+        assembly {
+            z := div(mul(x, y), WAD)
+        }
+    }
+
+    /// @dev Equivalent to `(x * y) / WAD` rounded down, but without overflow checks.
+    function rawSMulWad(int256 x, int256 y) internal pure returns (int256 z) {
+        /// @solidity memory-safe-assembly
+        assembly {
+            z := sdiv(mul(x, y), WAD)
+        }
+    }
+
     /// @dev Equivalent to `(x * y) / WAD` rounded up.
     function mulWadUp(uint256 x, uint256 y) internal pure returns (uint256 z) {
         /// @solidity memory-safe-assembly
@@ -72,6 +112,14 @@ library FixedPointMathLib {
                 mstore(0x00, 0xbac65e5b) // `MulWadFailed()`.
                 revert(0x1c, 0x04)
             }
+            z := add(iszero(iszero(mod(mul(x, y), WAD))), div(mul(x, y), WAD))
+        }
+    }
+
+    /// @dev Equivalent to `(x * y) / WAD` rounded up, but without overflow checks.
+    function rawMulWadUp(uint256 x, uint256 y) internal pure returns (uint256 z) {
+        /// @solidity memory-safe-assembly
+        assembly {
             z := add(iszero(iszero(mod(mul(x, y), WAD))), div(mul(x, y), WAD))
         }
     }
@@ -89,6 +137,36 @@ library FixedPointMathLib {
         }
     }
 
+    /// @dev Equivalent to `(x * WAD) / y` rounded down.
+    function sDivWad(int256 x, int256 y) internal pure returns (int256 z) {
+        /// @solidity memory-safe-assembly
+        assembly {
+            z := mul(x, WAD)
+            // Equivalent to `require(y != 0 && ((x * WAD) / WAD == x))`.
+            if iszero(and(iszero(iszero(y)), eq(sdiv(z, WAD), x))) {
+                mstore(0x00, 0x5c43740d) // `SDivWadFailed()`.
+                revert(0x1c, 0x04)
+            }
+            z := sdiv(mul(x, WAD), y)
+        }
+    }
+
+    /// @dev Equivalent to `(x * WAD) / y` rounded down, but without overflow and divide by zero checks.
+    function rawDivWad(uint256 x, uint256 y) internal pure returns (uint256 z) {
+        /// @solidity memory-safe-assembly
+        assembly {
+            z := div(mul(x, WAD), y)
+        }
+    }
+
+    /// @dev Equivalent to `(x * WAD) / y` rounded down, but without overflow and divide by zero checks.
+    function rawSDivWad(int256 x, int256 y) internal pure returns (int256 z) {
+        /// @solidity memory-safe-assembly
+        assembly {
+            z := sdiv(mul(x, WAD), y)
+        }
+    }
+
     /// @dev Equivalent to `(x * WAD) / y` rounded up.
     function divWadUp(uint256 x, uint256 y) internal pure returns (uint256 z) {
         /// @solidity memory-safe-assembly
@@ -102,6 +180,14 @@ library FixedPointMathLib {
         }
     }
 
+    /// @dev Equivalent to `(x * WAD) / y` rounded up, but without overflow and divide by zero checks.
+    function rawDivWadUp(uint256 x, uint256 y) internal pure returns (uint256 z) {
+        /// @solidity memory-safe-assembly
+        assembly {
+            z := add(iszero(iszero(mod(mul(x, WAD), y))), div(mul(x, WAD), y))
+        }
+    }
+
     /// @dev Equivalent to `x` to the power of `y`.
     /// because `x ** y = (e ** ln(x)) ** y = e ** (ln(x) * y)`.
     function powWad(int256 x, int256 y) internal pure returns (int256) {
@@ -110,23 +196,24 @@ library FixedPointMathLib {
     }
 
     /// @dev Returns `exp(x)`, denominated in `WAD`.
+    /// Credit to Remco Bloemen under MIT license: https://2π.com/22/exp-ln
     function expWad(int256 x) internal pure returns (int256 r) {
         unchecked {
-            // When the result is < 0.5 we return zero. This happens when
-            // x <= floor(log(0.5e18) * 1e18) ~ -42e18
-            if (x <= -42139678854452767551) return r;
+            // When the result is less than 0.5 we return zero.
+            // This happens when `x <= (log(1e-18) * 1e18) ~ -4.15e19`.
+            if (x <= -41446531673892822313) return r;
 
             /// @solidity memory-safe-assembly
             assembly {
-                // When the result is > (2**255 - 1) / 1e18 we can not represent it as an
-                // int. This happens when x >= floor(log((2**255 - 1) / 1e18) * 1e18) ~ 135.
+                // When the result is greater than `(2**255 - 1) / 1e18` we can not represent it as
+                // an int. This happens when `x >= floor(log((2**255 - 1) / 1e18) * 1e18) ≈ 135`.
                 if iszero(slt(x, 135305999368893231589)) {
                     mstore(0x00, 0xa37bfec9) // `ExpOverflow()`.
                     revert(0x1c, 0x04)
                 }
             }
 
-            // x is now in the range (-42, 136) * 1e18. Convert to (-42, 136) * 2**96
+            // `x` is now in the range `(-42, 136) * 1e18`. Convert to `(-42, 136) * 2**96`
             // for more intermediate precision and a binary basis. This base conversion
             // is a multiplication by 1e18 / 2**96 = 5**18 / 2**78.
             x = (x << 78) / 5 ** 18;
@@ -137,17 +224,17 @@ library FixedPointMathLib {
             int256 k = ((x << 96) / 54916777467707473351141471128 + 2 ** 95) >> 96;
             x = x - k * 54916777467707473351141471128;
 
-            // k is in the range [-61, 195].
+            // `k` is in the range `[-61, 195]`.
 
             // Evaluate using a (6, 7)-term rational approximation.
-            // p is made monic, we'll multiply by a scale factor later.
+            // `p` is made monic, we'll multiply by a scale factor later.
             int256 y = x + 1346386616545796478920950773328;
             y = ((y * x) >> 96) + 57155421227552351082224309758442;
             int256 p = y + x - 94201549194550492254356042504812;
             p = ((p * y) >> 96) + 28719021644029726153956944680412240;
             p = p * x + (4385272521454847904659076985693276 << 96);
 
-            // We leave p in 2**192 basis so we don't need to scale it back up for the division.
+            // We leave `p` in `2**192` basis so we don't need to scale it back up for the division.
             int256 q = x - 2855989394907223263936484059900;
             q = ((q * x) >> 96) + 50020603652535783019961831881945;
             q = ((q * x) >> 96) - 533845033583426703283633433725380;
@@ -159,17 +246,17 @@ library FixedPointMathLib {
             assembly {
                 // Div in assembly because solidity adds a zero check despite the unchecked.
                 // The q polynomial won't have zeros in the domain as all its roots are complex.
-                // No scaling is necessary because p is already 2**96 too large.
+                // No scaling is necessary because p is already `2**96` too large.
                 r := sdiv(p, q)
             }
 
-            // r should be in the range (0.09, 0.25) * 2**96.
+            // r should be in the range `(0.09, 0.25) * 2**96`.
 
             // We now need to multiply r by:
-            // * the scale factor s = ~6.031367120.
-            // * the 2**k factor from the range reduction.
-            // * the 1e18 / 2**96 factor for base conversion.
-            // We do this all at once, with an intermediate result in 2**213
+            // - The scale factor `s ≈ 6.031367120`.
+            // - The `2**k` factor from the range reduction.
+            // - The `1e18 / 2**96` factor for base conversion.
+            // We do this all at once, with an intermediate result in `2**213`
             // basis, so the final right shift is always by a positive amount.
             r = int256(
                 (uint256(r) * 3822833074963236453042738258902158003155416615667) >> uint256(195 - k)
@@ -178,81 +265,164 @@ library FixedPointMathLib {
     }
 
     /// @dev Returns `ln(x)`, denominated in `WAD`.
+    /// Credit to Remco Bloemen under MIT license: https://2π.com/22/exp-ln
     function lnWad(int256 x) internal pure returns (int256 r) {
-        unchecked {
-            /// @solidity memory-safe-assembly
-            assembly {
-                if iszero(sgt(x, 0)) {
-                    mstore(0x00, 0x1615e638) // `LnWadUndefined()`.
-                    revert(0x1c, 0x04)
-                }
-            }
+        /// @solidity memory-safe-assembly
+        assembly {
+            // We want to convert `x` from `10**18` fixed point to `2**96` fixed point.
+            // We do this by multiplying by `2**96 / 10**18`. But since
+            // `ln(x * C) = ln(x) + ln(C)`, we can simply do nothing here
+            // and add `ln(2**96 / 10**18)` at the end.
 
-            // We want to convert x from 10**18 fixed point to 2**96 fixed point.
-            // We do this by multiplying by 2**96 / 10**18. But since
-            // ln(x * C) = ln(x) + ln(C), we can simply do nothing here
-            // and add ln(2**96 / 10**18) at the end.
-
-            // Compute k = log2(x) - 96.
-            int256 k;
-            /// @solidity memory-safe-assembly
-            assembly {
-                k := shl(7, lt(0xffffffffffffffffffffffffffffffff, x))
-                k := or(k, shl(6, lt(0xffffffffffffffff, shr(k, x))))
-                k := or(k, shl(5, lt(0xffffffff, shr(k, x))))
-                k := or(k, shl(4, lt(0xffff, shr(k, x))))
-                k := or(k, shl(3, lt(0xff, shr(k, x))))
-                k := or(k, shl(2, lt(0xf, shr(k, x))))
-                k := sub(or(k, byte(shr(k, x), hex"00000101020202020303030303030303")), 96)
+            // Compute `k = log2(x) - 96`, `r = 159 - k = 255 - log2(x) = 255 ^ log2(x)`.
+            r := shl(7, lt(0xffffffffffffffffffffffffffffffff, x))
+            r := or(r, shl(6, lt(0xffffffffffffffff, shr(r, x))))
+            r := or(r, shl(5, lt(0xffffffff, shr(r, x))))
+            r := or(r, shl(4, lt(0xffff, shr(r, x))))
+            r := or(r, shl(3, lt(0xff, shr(r, x))))
+            // We place the check here for more optimal stack operations.
+            if iszero(sgt(x, 0)) {
+                mstore(0x00, 0x1615e638) // `LnWadUndefined()`.
+                revert(0x1c, 0x04)
             }
+            // forgefmt: disable-next-item
+            r := xor(r, byte(and(0x1f, shr(shr(r, x), 0x8421084210842108cc6318c6db6d54be)),
+                0xf8f9f9faf9fdfafbf9fdfcfdfafbfcfef9fafdfafcfcfbfefafafcfbffffffff))
 
             // Reduce range of x to (1, 2) * 2**96
             // ln(2^k * x) = k * ln(2) + ln(x)
-            x = int256(uint256(x << uint256(159 - k)) >> 159);
+            x := shr(159, shl(r, x))
 
             // Evaluate using a (8, 8)-term rational approximation.
-            // p is made monic, we will multiply by a scale factor later.
-            int256 p = x + 3273285459638523848632254066296;
-            p = ((p * x) >> 96) + 24828157081833163892658089445524;
-            p = ((p * x) >> 96) + 43456485725739037958740375743393;
-            p = ((p * x) >> 96) - 11111509109440967052023855526967;
-            p = ((p * x) >> 96) - 45023709667254063763336534515857;
-            p = ((p * x) >> 96) - 14706773417378608786704636184526;
-            p = p * x - (795164235651350426258249787498 << 96);
+            // `p` is made monic, we will multiply by a scale factor later.
+            // forgefmt: disable-next-item
+            let p := sub( // This heavily nested expression is to avoid stack-too-deep for via-ir.
+                sar(96, mul(add(43456485725739037958740375743393,
+                sar(96, mul(add(24828157081833163892658089445524,
+                sar(96, mul(add(3273285459638523848632254066296,
+                    x), x))), x))), x)), 11111509109440967052023855526967)
+            p := sub(sar(96, mul(p, x)), 45023709667254063763336534515857)
+            p := sub(sar(96, mul(p, x)), 14706773417378608786704636184526)
+            p := sub(mul(p, x), shl(96, 795164235651350426258249787498))
+            // We leave `p` in `2**192` basis so we don't need to scale it back up for the division.
 
-            // We leave p in 2**192 basis so we don't need to scale it back up for the division.
-            // q is monic by convention.
-            int256 q = x + 5573035233440673466300451813936;
-            q = ((q * x) >> 96) + 71694874799317883764090561454958;
-            q = ((q * x) >> 96) + 283447036172924575727196451306956;
-            q = ((q * x) >> 96) + 401686690394027663651624208769553;
-            q = ((q * x) >> 96) + 204048457590392012362485061816622;
-            q = ((q * x) >> 96) + 31853899698501571402653359427138;
-            q = ((q * x) >> 96) + 909429971244387300277376558375;
-            /// @solidity memory-safe-assembly
-            assembly {
-                // Div in assembly because solidity adds a zero check despite the unchecked.
-                // The q polynomial is known not to have zeros in the domain.
-                // No scaling required because p is already 2**96 too large.
-                r := sdiv(p, q)
-            }
+            // `q` is monic by convention.
+            let q := add(5573035233440673466300451813936, x)
+            q := add(71694874799317883764090561454958, sar(96, mul(x, q)))
+            q := add(283447036172924575727196451306956, sar(96, mul(x, q)))
+            q := add(401686690394027663651624208769553, sar(96, mul(x, q)))
+            q := add(204048457590392012362485061816622, sar(96, mul(x, q)))
+            q := add(31853899698501571402653359427138, sar(96, mul(x, q)))
+            q := add(909429971244387300277376558375, sar(96, mul(x, q)))
 
-            // r is in the range (0, 0.125) * 2**96
+            // `p / q` is in the range `(0, 0.125) * 2**96`.
 
             // Finalization, we need to:
-            // * multiply by the scale factor s = 5.549…
-            // * add ln(2**96 / 10**18)
-            // * add k * ln(2)
-            // * multiply by 10**18 / 2**96 = 5**18 >> 78
+            // - Multiply by the scale factor `s = 5.549…`.
+            // - Add `ln(2**96 / 10**18)`.
+            // - Add `k * ln(2)`.
+            // - Multiply by `10**18 / 2**96 = 5**18 >> 78`.
 
-            // mul s * 5e18 * 2**96, base is now 5**18 * 2**192
-            r *= 1677202110996718588342820967067443963516166;
-            // add ln(2) * k * 5e18 * 2**192
-            r += 16597577552685614221487285958193947469193820559219878177908093499208371 * k;
-            // add ln(2**96 / 10**18) * 5e18 * 2**192
-            r += 600920179829731861736702779321621459595472258049074101567377883020018308;
-            // base conversion: mul 2**18 / 2**192
-            r >>= 174;
+            // The q polynomial is known not to have zeros in the domain.
+            // No scaling required because p is already `2**96` too large.
+            p := sdiv(p, q)
+            // Multiply by the scaling factor: `s * 5**18 * 2**96`, base is now `5**18 * 2**192`.
+            p := mul(1677202110996718588342820967067443963516166, p)
+            // Add `ln(2) * k * 5**18 * 2**192`.
+            // forgefmt: disable-next-item
+            p := add(mul(16597577552685614221487285958193947469193820559219878177908093499208371, sub(159, r)), p)
+            // Add `ln(2**96 / 10**18) * 5**18 * 2**192`.
+            p := add(600920179829731861736702779321621459595472258049074101567377883020018308, p)
+            // Base conversion: mul `2**18 / 2**192`.
+            r := sar(174, p)
+        }
+    }
+
+    /// @dev Returns `W_0(x)`, denominated in `WAD`.
+    /// See: https://en.wikipedia.org/wiki/Lambert_W_function
+    /// a.k.a. Product log function. This is an approximation of the principal branch.
+    function lambertW0Wad(int256 x) internal pure returns (int256 w) {
+        // forgefmt: disable-next-item
+        unchecked {
+            if ((w = x) <= -367879441171442322) revert OutOfDomain(); // `x` less than `-1/e`.
+            int256 wad = int256(WAD);
+            int256 p = x;
+            uint256 c; // Whether we need to avoid catastrophic cancellation.
+            uint256 i = 4; // Number of iterations.
+            if (w <= 0x1ffffffffffff) {
+                if (-0x4000000000000 <= w) {
+                    i = 1; // Inputs near zero only take one step to converge.
+                } else if (w <= -0x3ffffffffffffff) {
+                    i = 32; // Inputs near `-1/e` take very long to converge.
+                }
+            } else if (w >> 63 == 0) {
+                /// @solidity memory-safe-assembly
+                assembly {
+                    // Inline log2 for more performance, since the range is small.
+                    let v := shr(49, w)
+                    let l := shl(3, lt(0xff, v))
+                    l := add(or(l, byte(and(0x1f, shr(shr(l, v), 0x8421084210842108cc6318c6db6d54be)),
+                        0x0706060506020504060203020504030106050205030304010505030400000000)), 49)
+                    w := sdiv(shl(l, 7), byte(sub(l, 31), 0x0303030303030303040506080c13))
+                    c := gt(l, 60)
+                    i := add(2, add(gt(l, 53), c))
+                }
+            } else {
+                int256 ll = lnWad(w = lnWad(w));
+                /// @solidity memory-safe-assembly
+                assembly {
+                    // `w = ln(x) - ln(ln(x)) + b * ln(ln(x)) / ln(x)`.
+                    w := add(sdiv(mul(ll, 1023715080943847266), w), sub(w, ll))
+                    i := add(3, iszero(shr(68, x)))
+                    c := iszero(shr(143, x))
+                }
+                if (c == 0) {
+                    do { // If `x` is big, use Newton's so that intermediate values won't overflow.
+                        int256 e = expWad(w);
+                        /// @solidity memory-safe-assembly
+                        assembly {
+                            let t := mul(w, div(e, wad))
+                            w := sub(w, sdiv(sub(t, x), div(add(e, t), wad)))
+                        }
+                        if (p <= w) break;
+                        p = w;
+                    } while (--i != 0);
+                    /// @solidity memory-safe-assembly
+                    assembly {
+                        w := sub(w, sgt(w, 2))
+                    }
+                    return w;
+                }
+            }
+            do { // Otherwise, use Halley's for faster convergence.
+                int256 e = expWad(w);
+                /// @solidity memory-safe-assembly
+                assembly {
+                    let t := add(w, wad)
+                    let s := sub(mul(w, e), mul(x, wad))
+                    w := sub(w, sdiv(mul(s, wad), sub(mul(e, t), sdiv(mul(add(t, wad), s), add(t, t)))))
+                }
+                if (p <= w) break;
+                p = w;
+            } while (--i != c);
+            /// @solidity memory-safe-assembly
+            assembly {
+                w := sub(w, sgt(w, 2))
+            }
+            // For certain ranges of `x`, we'll use the quadratic-rate recursive formula of
+            // R. Iacono and J.P. Boyd for the last iteration, to avoid catastrophic cancellation.
+            if (c != 0) {
+                int256 t = w | 1;
+                /// @solidity memory-safe-assembly
+                assembly {
+                    x := sdiv(mul(x, wad), t)
+                }
+                x = (t * (wad + lnWad(x)));
+                /// @solidity memory-safe-assembly
+                assembly {
+                    w := sdiv(x, add(wad, t))
+                }
+            }
         }
     }
 
@@ -260,7 +430,7 @@ library FixedPointMathLib {
     /*                  GENERAL NUMBER UTILITIES                  */
     /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-    /// @dev Calculates `floor(a * b / d)` with full precision.
+    /// @dev Calculates `floor(x * y / d)` with full precision.
     /// Throws if result overflows a uint256 or when `d` is zero.
     /// Credit to Remco Bloemen under MIT license: https://2π.com/21/muldiv
     function fullMulDiv(uint256 x, uint256 y, uint256 d) internal pure returns (uint256 result) {
@@ -274,10 +444,10 @@ library FixedPointMathLib {
                 // variables such that `product = p1 * 2**256 + p0`.
 
                 // Least significant 256 bits of the product.
-                let p0 := mul(x, y)
+                result := mul(x, y) // Temporarily use `result` as `p0` to save gas.
                 let mm := mulmod(x, y, not(0))
                 // Most significant 256 bits of the product.
-                let p1 := sub(mm, add(p0, lt(mm, p0)))
+                let p1 := sub(mm, add(result, lt(mm, result)))
 
                 // Handle non-overflow cases, 256 by 256 division.
                 if iszero(p1) {
@@ -285,7 +455,7 @@ library FixedPointMathLib {
                         mstore(0x00, 0xae47f702) // `FullMulDivFailed()`.
                         revert(0x1c, 0x04)
                     }
-                    result := div(p0, d)
+                    result := div(result, d)
                     break
                 }
 
@@ -310,7 +480,7 @@ library FixedPointMathLib {
                 // modulo `2**256` such that `d * inv = 1 mod 2**256`.
                 // Compute the inverse by starting with a seed that is correct
                 // correct for four bits. That is, `d * inv = 1 mod 2**4`.
-                let inv := xor(mul(3, d), 2)
+                let inv := xor(2, mul(3, d))
                 // Now use Newton-Raphson iteration to improve the precision.
                 // Thanks to Hensel's lifting lemma, this also works in modular
                 // arithmetic, doubling the correct bits in each step.
@@ -324,7 +494,10 @@ library FixedPointMathLib {
                         // Divide [p1 p0] by the factors of two.
                         // Shift in bits from `p1` into `p0`. For this we need
                         // to flip `t` such that it is `2**256 / t`.
-                        or(mul(sub(p1, gt(r, p0)), add(div(sub(0, t), t), 1)), div(sub(p0, r), t)),
+                        or(
+                            mul(sub(p1, gt(r, result)), add(div(sub(0, t), t), 1)),
+                            div(sub(result, r), t)
+                        ),
                         // inverse mod 2**256
                         mul(inv, sub(2, mul(d, inv)))
                     )
@@ -336,7 +509,7 @@ library FixedPointMathLib {
     /// @dev Calculates `floor(x * y / d)` with full precision, rounded up.
     /// Throws if result overflows a uint256 or when `d` is zero.
     /// Credit to Uniswap-v3-core under MIT license:
-    /// https://github.com/Uniswap/v3-core/blob/contracts/libraries/FullMath.sol
+    /// https://github.com/Uniswap/v3-core/blob/main/contracts/libraries/FullMath.sol
     function fullMulDivUp(uint256 x, uint256 y, uint256 d) internal pure returns (uint256 result) {
         result = fullMulDiv(x, y, d);
         /// @solidity memory-safe-assembly
@@ -570,8 +743,9 @@ library FixedPointMathLib {
             r := or(r, shl(5, lt(0xffffffff, shr(r, x))))
             r := or(r, shl(4, lt(0xffff, shr(r, x))))
             r := or(r, shl(3, lt(0xff, shr(r, x))))
-            r := or(r, shl(2, lt(0xf, shr(r, x))))
-            r := or(r, byte(shr(r, x), hex"00000101020202020303030303030303"))
+            // forgefmt: disable-next-item
+            r := or(r, byte(and(0x1f, shr(shr(r, x), 0x8421084210842108cc6318c6db6d54be)),
+                0x0706060506020504060203020504030106050205030304010505030400000000))
         }
     }
 
@@ -643,6 +817,72 @@ library FixedPointMathLib {
         }
     }
 
+    /// @dev Returns the scientific notation format `mantissa * 10 ** exponent` of `x`.
+    /// Useful for compressing prices (e.g. using 25 bit mantissa and 7 bit exponent).
+    function sci(uint256 x) internal pure returns (uint256 mantissa, uint256 exponent) {
+        /// @solidity memory-safe-assembly
+        assembly {
+            mantissa := x
+            if mantissa {
+                if iszero(mod(mantissa, 1000000000000000000000000000000000)) {
+                    mantissa := div(mantissa, 1000000000000000000000000000000000)
+                    exponent := 33
+                }
+                if iszero(mod(mantissa, 10000000000000000000)) {
+                    mantissa := div(mantissa, 10000000000000000000)
+                    exponent := add(exponent, 19)
+                }
+                if iszero(mod(mantissa, 1000000000000)) {
+                    mantissa := div(mantissa, 1000000000000)
+                    exponent := add(exponent, 12)
+                }
+                if iszero(mod(mantissa, 1000000)) {
+                    mantissa := div(mantissa, 1000000)
+                    exponent := add(exponent, 6)
+                }
+                if iszero(mod(mantissa, 10000)) {
+                    mantissa := div(mantissa, 10000)
+                    exponent := add(exponent, 4)
+                }
+                if iszero(mod(mantissa, 100)) {
+                    mantissa := div(mantissa, 100)
+                    exponent := add(exponent, 2)
+                }
+                if iszero(mod(mantissa, 10)) {
+                    mantissa := div(mantissa, 10)
+                    exponent := add(exponent, 1)
+                }
+            }
+        }
+    }
+
+    /// @dev Convenience function for packing `x` into a smaller number using `sci`.
+    /// The `mantissa` will be in bits [7..255] (the upper 249 bits).
+    /// The `exponent` will be in bits [0..6] (the lower 7 bits).
+    /// Use `SafeCastLib` to safely ensure that the `packed` number is small
+    /// enough to fit in the desired unsigned integer type:
+    /// ```
+    ///     uint32 packed = SafeCastLib.toUint32(FixedPointMathLib.packSci(777 ether));
+    /// ```
+    function packSci(uint256 x) internal pure returns (uint256 packed) {
+        (x, packed) = sci(x); // Reuse for `mantissa` and `exponent`.
+        /// @solidity memory-safe-assembly
+        assembly {
+            if shr(249, x) {
+                mstore(0x00, 0xce30380c) // `MantissaOverflow()`.
+                revert(0x1c, 0x04)
+            }
+            packed := or(shl(7, x), packed)
+        }
+    }
+
+    /// @dev Convenience function for unpacking a packed number from `packSci`.
+    function unpackSci(uint256 packed) internal pure returns (uint256 unpacked) {
+        unchecked {
+            unpacked = (packed >> 7) * 10 ** (packed & 0x7f);
+        }
+    }
+
     /// @dev Returns the average of `x` and `y`.
     function avg(uint256 x, uint256 y) internal pure returns (uint256 z) {
         unchecked {
@@ -653,7 +893,7 @@ library FixedPointMathLib {
     /// @dev Returns the average of `x` and `y`.
     function avg(int256 x, int256 y) internal pure returns (int256 z) {
         unchecked {
-            z = (x >> 1) + (y >> 1) + (((x & 1) + (y & 1)) >> 1);
+            z = (x >> 1) + (y >> 1) + (x & y & 1);
         }
     }
 
@@ -661,7 +901,7 @@ library FixedPointMathLib {
     function abs(int256 x) internal pure returns (uint256 z) {
         /// @solidity memory-safe-assembly
         assembly {
-            z := xor(sub(0, shr(255, x)), add(sub(0, shr(255, x)), x))
+            z := xor(sar(255, x), add(sar(255, x), x))
         }
     }
 

@@ -337,7 +337,7 @@ contract ERC1967Factory {
              * 5b          | JUMPDEST       | 0 0                 |                                 |
              * 3d          | RETURNDATASIZE | 0 0 0               |                                 |
              * 35          | CALLDATALOAD   | impl 0 0            |                                 |
-             * 06 0x20     | PUSH1 0x20     | w impl 0 0          |                                 |
+             * 60 0x20     | PUSH1 0x20     | w impl 0 0          |                                 |
              * 35          | CALLDATALOAD   | slot impl 0 0       |                                 |
              * 55          | SSTORE         | 0 0                 |                                 |
              *                                                                                      |
@@ -381,7 +381,6 @@ contract ERC1967Factory {
              * fd          | REVERT         |                     | [0..returndatasize): returndata |
              * -------------------------------------------------------------------------------------+
              */
-
             m := mload(0x40)
             // forgefmt: disable-start
             switch shr(112, address())

@@ -302,7 +302,7 @@ library JSONParserLib {
 
     /// @dev Parses a signed integer from a string (in decimal, i.e. base 10).
     /// Reverts if `s` is not a valid int256 string matching the RegEx `^[+-]?[0-9]+$`,
-    /// or if the parsed number is too big for a int256.
+    /// or if the parsed number cannot fit within `[-2**255 .. 2**255 - 1]`.
     function parseInt(string memory s) internal pure returns (int256 result) {
         uint256 n = bytes(s).length;
         uint256 sign;
@@ -323,7 +323,7 @@ library JSONParserLib {
         uint256 x = parseUint(s);
         /// @solidity memory-safe-assembly
         assembly {
-            if shr(255, x) {
+            if iszero(lt(x, add(shl(255, 1), isNegative))) {
                 mstore(0x00, 0x10182796) // `ParsingFailed()`.
                 revert(0x1c, 0x04)
             }
@@ -338,17 +338,22 @@ library JSONParserLib {
 
     /// @dev Parses an unsigned integer from a string (in hexadecimal, i.e. base 16).
     /// Reverts if `s` is not a valid uint256 hex string matching the RegEx
-    /// `^(0[xX])?[0-9a-fA-F]+$`, or if the parsed number is too big for a uint256.
+    /// `^(0[xX])?[0-9a-fA-F]+$`, or if the parsed number cannot fit within `[0 .. 2**256 - 1]`.
     function parseUintFromHex(string memory s) internal pure returns (uint256 result) {
         /// @solidity memory-safe-assembly
         assembly {
             let n := mload(s)
-            let p := and(0xffff, mload(add(s, 2))) // Skip two if starts with '0x' or '0X'.
-            for { let i := shl(1, and(gt(n, 1), or(eq(p, 0x3078), eq(p, 0x3058)))) } 1 {} {
+            // Skip two if starts with '0x' or '0X'.
+            let i := shl(1, and(eq(0x3078, or(shr(240, mload(add(s, 0x20))), 0x20)), gt(n, 1)))
+            for {} 1 {} {
                 i := add(i, 1)
-                let c := sub(and(mload(add(s, i)), 0xff), 48)
-                n := mul(n, and(shr(c, 0x7e0000007e03ff), iszero(shr(252, result))))
-                result := add(shl(4, result), sub(c, add(mul(gt(c, 16), 7), shl(5, gt(c, 48)))))
+                let c :=
+                    byte(
+                        and(0x1f, shr(and(mload(add(s, i)), 0xff), 0x3e4088843e41bac000000000000)),
+                        0x3010a071000000b0104040208000c05090d060e0f
+                    )
+                n := mul(n, iszero(or(iszero(c), shr(252, result))))
+                result := add(shl(4, result), sub(c, 1))
                 if iszero(lt(i, n)) { break }
             }
             if iszero(n) {
@@ -443,7 +448,7 @@ library JSONParserLib {
                     let escape := chr(curr)
                     curr := add(curr, 1)
                     // '"', '/', '\\'.
-                    if and(shr(sub(escape, 34), 0x400000000002001), 1) {
+                    if and(shr(escape, 0x100000000000800400000000), 1) {
                         mstore8(out, escape)
                         out := add(out, 1)
                         continue
@@ -681,7 +686,7 @@ library JSONParserLib {
                 if eq(chr(_pOut), 46) { _pOut := skip0To9s(add(_pOut, 1), end_, 1) } // '.'.
                 let t_ := mload(_pOut)
                 // 'E', 'e'.
-                if or(eq(byte(0, t_), 69), eq(byte(0, t_), 101)) {
+                if eq(or(0x20, byte(0, t_)), 101) {
                     // forgefmt: disable-next-item
                     _pOut := skip0To9s(add(byte(sub(byte(1, t_), 14), 0x010001), // '+', '-'.
                         add(_pOut, 1)), end_, 1)

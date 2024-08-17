@@ -4,6 +4,7 @@ pragma solidity ^0.8.4;
 import "./utils/SoladyTest.sol";
 import {SignatureCheckerLib} from "../src/utils/SignatureCheckerLib.sol";
 import {ERC6551Proxy} from "../src/accounts/ERC6551Proxy.sol";
+import {EIP712} from "../src/utils/EIP712.sol";
 import {ERC6551, MockERC6551, MockERC6551V2} from "./utils/mocks/MockERC6551.sol";
 import {MockERC6551Registry} from "./utils/mocks/MockERC6551Registry.sol";
 import {MockERC721} from "./utils/mocks/MockERC721.sol";
@@ -35,11 +36,21 @@ contract ERC6551Test is SoladyTest {
 
     address internal _erc6551;
 
+    address internal _erc6551V2;
+
     address internal _erc721;
 
     address internal _proxy;
 
-    mapping(uint256 => bool) internal _minted;
+    // By right, this should be the keccak256 of some long-ass string:
+    // (e.g. `keccak256("Parent(bytes32 childHash,Mail child)Mail(Person from,Person to,string contents)Person(string name,address wallet)")`).
+    // But I'm lazy and will use something randomish here.
+    bytes32 internal constant _PARENT_TYPEHASH =
+        0xd61db970ec8a2edc5f9fd31d876abe01b785909acb16dcd4baaf3b434b4c439b;
+
+    // By right, this should be a proper domain separator, but I'm lazy.
+    bytes32 internal constant _DOMAIN_SEP_B =
+        0xa1a044077d7677adbbfa892ded5390979b33993e0e2a457e3f974bbcda53821b;
 
     bytes32 internal constant _ERC1967_IMPLEMENTATION_SLOT =
         0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc;
@@ -62,15 +73,37 @@ contract ERC6551Test is SoladyTest {
         _erc6551 = address(new MockERC6551());
         _erc721 = address(new MockERC721());
         _proxy = address(new ERC6551Proxy(_erc6551));
+        _erc6551V2 = address(new MockERC6551V2());
+    }
+
+    function testBaseFeeMini() public {
+        vm.fee(11);
+
+        bytes memory initcode = hex"65483d52593df33d526006601af3";
+        emit LogBytes32(keccak256(initcode));
+        uint256 result;
+        /// @solidity memory-safe-assembly
+        assembly {
+            let deployed := create(0, add(initcode, 0x20), mload(initcode))
+            if iszero(staticcall(gas(), deployed, 0x00, 0x00, 0x00, 0x20)) { invalid() }
+            if iszero(eq(returndatasize(), 0x20)) { invalid() }
+            result := mload(0x00)
+        }
+        emit LogUint("basefee", result);
+    }
+
+    function _testTempsMint(address owner) internal returns (uint256 tokenId) {
+        while (true) {
+            tokenId = _random() % 8 == 0 ? _random() % 32 : _random();
+            (bool success,) =
+                _erc721.call(abi.encodeWithSignature("mint(address,uint256)", owner, tokenId));
+            if (success) return tokenId;
+        }
     }
 
     function _testTemps() internal returns (_TestTemps memory t) {
         t.owner = _randomNonZeroAddress();
-        do {
-            t.tokenId = _random();
-            _minted[t.tokenId] = true;
-        } while (_minted[t.tokenId] == false);
-        MockERC721(_erc721).mint(t.owner, t.tokenId);
+        t.tokenId = _testTempsMint(t.owner);
         t.chainId = block.chainid;
         t.salt = bytes32(_random());
         address account = _registry.createAccount(_proxy, t.salt, t.chainId, _erc721, t.tokenId);
@@ -78,7 +111,15 @@ contract ERC6551Test is SoladyTest {
     }
 
     function testDeployERC6551Proxy() public {
-        console.log(LibString.toHexString(address(new ERC6551Proxy(_erc6551)).code));
+        emit LogBytes("ERC6551Proxy code", address(new ERC6551Proxy(_erc6551)).code);
+    }
+
+    function testInitializeERC6551ProxyImplementation() public {
+        address account = address(_testTemps().account);
+        (bool success,) = account.call("");
+        assertTrue(success);
+        bytes32 implementationSlotValue = bytes32(uint256(uint160(_erc6551)));
+        assertEq(vm.load(account, _ERC1967_IMPLEMENTATION_SLOT), implementationSlotValue);
     }
 
     function testDeployERC6551(uint256) public {
@@ -95,6 +136,18 @@ contract ERC6551Test is SoladyTest {
             MockERC721(_erc721).transferFrom(owner, newOnwer, t.tokenId);
             assertEq(t.account.owner(), newOnwer);
         }
+    }
+
+    function testOwnerWorksWithChainIdChange(uint256 oldChainId, uint256 newChainId) public {
+        oldChainId = _bound(oldChainId, 0, 2 ** 64 - 1);
+        newChainId = _bound(newChainId, 0, 2 ** 64 - 1);
+        vm.chainId(oldChainId);
+        _erc6551 = address(new MockERC6551());
+        _proxy = address(new ERC6551Proxy(_erc6551));
+        _TestTemps memory t = _testTemps();
+        assertEq(t.account.owner(), t.owner);
+        vm.chainId(newChainId);
+        assertEq(t.account.owner(), t.owner);
     }
 
     function testOnERC721ReceivedCycles() public {
@@ -124,6 +177,31 @@ contract ERC6551Test is SoladyTest {
             _TestTemps memory u = _testTemps();
             vm.prank(u.owner);
             MockERC721(_erc721).safeTransferFrom(u.owner, address(t[n - 1].account), u.tokenId);
+        }
+    }
+
+    function testOnERC721ReceivedCyclesWithDifferentChainIds(uint256) public {
+        _TestTemps[] memory t = new _TestTemps[](3);
+        unchecked {
+            for (uint256 i; i != 3; ++i) {
+                vm.chainId(i);
+                t[i] = _testTemps();
+                if (i != 0) {
+                    vm.prank(t[i].owner);
+                    MockERC721(_erc721).safeTransferFrom(
+                        t[i].owner, address(t[i - 1].account), t[i].tokenId
+                    );
+                    t[i].owner = address(t[i - 1].account);
+                }
+            }
+        }
+        unchecked {
+            vm.chainId(_random() % 3);
+            uint256 i = _random() % 3;
+            uint256 j = _random() % 3;
+            while (j == i) j = _random() % 3;
+            vm.prank(t[i].owner);
+            MockERC721(_erc721).safeTransferFrom(t[i].owner, address(t[j].account), t[i].tokenId);
         }
     }
 
@@ -167,7 +245,7 @@ contract ERC6551Test is SoladyTest {
         address target = address(new Target());
         bytes memory data = _randomBytes(111);
 
-        assertEq(t.account.state(), 0);
+        assertEq(t.account.state(), bytes32(0));
 
         vm.prank(t.owner);
         t.account.execute(target, 123, abi.encodeWithSignature("setData(bytes)", data), 0);
@@ -189,8 +267,6 @@ contract ERC6551Test is SoladyTest {
         t.account.execute(
             target, 123, abi.encodeWithSignature("revertWithTargetError(bytes)", data), 1
         );
-
-        assertEq(t.account.state(), 1);
     }
 
     function testExecuteBatch() public {
@@ -205,7 +281,7 @@ contract ERC6551Test is SoladyTest {
         calls[0].data = abi.encodeWithSignature("setData(bytes)", _randomBytes(111));
         calls[1].data = abi.encodeWithSignature("setData(bytes)", _randomBytes(222));
 
-        assertEq(t.account.state(), 0);
+        assertEq(t.account.state(), bytes32(0));
 
         vm.prank(t.owner);
         t.account.executeBatch(calls, 0);
@@ -222,15 +298,13 @@ contract ERC6551Test is SoladyTest {
         vm.prank(t.owner);
         vm.expectRevert(ERC6551.OperationNotSupported.selector);
         t.account.executeBatch(calls, 1);
-
-        assertEq(t.account.state(), 1);
     }
 
     function testExecuteBatch(uint256 r) public {
         _TestTemps memory t = _testTemps();
         vm.deal(address(t.account), 1 ether);
 
-        assertEq(t.account.state(), 0);
+        assertEq(t.account.state(), bytes32(0));
 
         unchecked {
             uint256 n = r & 3;
@@ -260,34 +334,39 @@ contract ERC6551Test is SoladyTest {
                 assertEq(abi.decode(results[i], (bytes)), _randomBytes(v));
             }
         }
-
-        assertEq(t.account.state(), 1);
     }
 
     function testUpgrade() public {
         _TestTemps memory t = _testTemps();
-        address anotherImplementation = address(new MockERC6551V2());
         vm.expectRevert(ERC6551.Unauthorized.selector);
-        t.account.upgradeTo(anotherImplementation);
-        assertEq(t.account.state(), 0);
-        assertEq(t.account.version(), "1");
+        t.account.upgradeToAndCall(_erc6551V2, bytes(""));
+        bytes32 state;
+        assertEq(t.account.state(), state);
+        assertEq(t.account.mockId(), "1");
 
         vm.prank(t.owner);
-        t.account.upgradeTo(anotherImplementation);
-        assertEq(t.account.state(), 1);
-        assertEq(t.account.version(), "2");
+        bytes memory data =
+            abi.encodeWithSignature("upgradeToAndCall(address,bytes)", _erc6551V2, "");
+        (bool success,) = address(t.account).call(data);
+        assertTrue(success);
+        assertEq(t.account.mockId(), "2");
+        state = keccak256(abi.encode(state, data));
+        assertEq(t.account.state(), state);
 
         vm.prank(t.owner);
-        t.account.upgradeTo(_erc6551);
-        assertEq(t.account.state(), 2);
-        assertEq(t.account.version(), "1");
+        data = abi.encodeWithSignature("upgradeToAndCall(address,bytes)", _erc6551, "");
+        (success,) = address(t.account).call(data);
+        assertTrue(success);
+        assertEq(t.account.mockId(), "1");
+        state = keccak256(abi.encode(state, data));
+        assertEq(t.account.state(), state);
     }
 
     function testSupportsInterface() public {
         _TestTemps memory t = _testTemps();
         assertTrue(t.account.supportsInterface(0x01ffc9a7));
         assertTrue(t.account.supportsInterface(0x6faff5f1));
-        assertTrue(t.account.supportsInterface(0x74420f4c));
+        assertTrue(t.account.supportsInterface(0x51945447));
         assertFalse(t.account.supportsInterface(0x00000001));
     }
 
@@ -315,32 +394,13 @@ contract ERC6551Test is SoladyTest {
         assertEq(calls[1].target.balance, 456);
     }
 
-    function testIsValidSignature() public {
+    function testIsValidSigner(address signer) public {
         _TestTemps memory t = _testTemps();
-        (t.signer, t.privateKey) = _randomSigner();
-        (t.v, t.r, t.s) =
-            vm.sign(t.privateKey, SignatureCheckerLib.toEthSignedMessageHash(keccak256("123")));
-
-        vm.prank(t.owner);
-        MockERC721(_erc721).safeTransferFrom(t.owner, t.signer, t.tokenId);
-
-        // Success returns `0x1626ba7e`.
-        bytes memory signature = abi.encodePacked(t.r, t.s, t.v);
-        assert(
-            t.account.isValidSignature(
-                SignatureCheckerLib.toEthSignedMessageHash(keccak256("123")), signature
-            ) == 0x1626ba7e
-        );
-    }
-
-    function testERC6551ProxyDefaultAddressTrick(uint256 d, uint256 s) public {
-        address computed;
-        assembly {
-            computed := or(shr(shl(96, s), d), s)
+        if (signer == t.owner) {
+            assertEq(t.account.isValidSigner(signer, _randomBytes(111)), bytes4(0x523e3260));
+        } else {
+            assertEq(t.account.isValidSigner(signer, _randomBytes(111)), bytes4(0x00000000));
         }
-        assertEq(
-            computed, address(uint160(s)) == address(0) ? address(uint160(d)) : address(uint160(s))
-        );
     }
 
     function _randomBytes(uint256 seed) internal pure returns (bytes memory result) {
@@ -356,5 +416,34 @@ contract ERC6551Test is SoladyTest {
                 mstore(0x40, add(add(result, 0x40), n))
             }
         }
+    }
+
+    function testUpdateState(uint256 seed) public {
+        bytes[] memory data = new bytes[](2);
+        if (_random() % 8 != 0) data[0] = _randomBytes(seed);
+        if (_random() % 8 != 0) data[1] = _randomBytes(~seed);
+
+        bytes32[] memory statesA = new bytes32[](2);
+        bytes32[] memory statesB = new bytes32[](2);
+
+        _TestTemps memory t = _testTemps();
+
+        t.account.somethingThatUpdatesState(data[0]);
+        statesA[0] = t.account.state();
+        t.account.somethingThatUpdatesState(data[1]);
+        statesA[1] = t.account.state();
+
+        vm.prank(t.owner);
+        t.account.upgradeToAndCall(_erc6551V2, "");
+
+        t.account.clearState();
+
+        t.account.somethingThatUpdatesState(data[0]);
+        statesB[0] = t.account.state();
+        t.account.somethingThatUpdatesState(data[1]);
+        statesB[1] = t.account.state();
+
+        assertEq(statesA, statesB);
+        assertTrue(statesA[0] != statesA[1]);
     }
 }

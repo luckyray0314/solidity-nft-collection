@@ -2,7 +2,7 @@
 pragma solidity ^0.8.4;
 
 /// @notice Optimized sorts and operations for sorted arrays.
-/// @author Solady (https://github.com/vectorized/solady/blob/main/src/utils/Sort.sol)
+/// @author Solady (https://github.com/Vectorized/solady/blob/main/src/utils/LibSort.sol)
 library LibSort {
     /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
     /*                      INSERTION SORT                        */
@@ -312,6 +312,32 @@ library LibSort {
     /// @dev Reverses the array in-place.
     function reverse(address[] memory a) internal pure {
         reverse(_toUints(a));
+    }
+
+    /// @dev Returns a copy of the array.
+    function copy(uint256[] memory a) internal pure returns (uint256[] memory result) {
+        /// @solidity memory-safe-assembly
+        assembly {
+            result := mload(0x40)
+            let end := add(add(result, 0x20), shl(5, mload(a)))
+            let o := result
+            for { let d := sub(a, result) } 1 {} {
+                mstore(o, mload(add(o, d)))
+                o := add(0x20, o)
+                if eq(o, end) { break }
+            }
+            mstore(0x40, o)
+        }
+    }
+
+    /// @dev Returns a copy of the array.
+    function copy(int256[] memory a) internal pure returns (int256[] memory result) {
+        result = _toInts(copy(_toUints(a)));
+    }
+
+    /// @dev Returns a copy of the array.
+    function copy(address[] memory a) internal pure returns (address[] memory result) {
+        result = _toAddresses(copy(_toUints(a)));
     }
 
     /// @dev Returns whether the array is sorted in ascending order.

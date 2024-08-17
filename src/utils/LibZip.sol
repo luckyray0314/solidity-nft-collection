@@ -28,8 +28,8 @@ library LibZip {
                 _d := add(d_, 1)
             }
             function u24(p_) -> _u {
-                let w := mload(p_)
-                _u := or(shl(16, byte(2, w)), or(shl(8, byte(1, w)), byte(0, w)))
+                _u := mload(p_)
+                _u := or(shl(16, byte(2, _u)), or(shl(8, byte(1, _u)), byte(0, _u)))
             }
             function cmp(p_, q_, e_) -> _l {
                 for { e_ := sub(e_, q_) } lt(_l, e_) { _l := add(_l, 1) } {
@@ -46,7 +46,7 @@ library LibZip {
                 mstore(ms8(_o, sub(runs_, 1)), mload(src_))
                 _o := add(1, add(_o, runs_))
             }
-            function match(l_, d_, o_) -> _o {
+            function mt(l_, d_, o_) -> _o {
                 for { d_ := sub(d_, 1) } iszero(lt(l_, 263)) { l_ := sub(l_, 262) } {
                     o_ := ms8(ms8(ms8(o_, add(224, shr(8, d_))), 253), and(0xff, d_))
                 }
@@ -57,8 +57,8 @@ library LibZip {
                 _o := ms8(ms8(o_, add(shl(5, l_), shr(8, d_))), and(0xff, d_))
             }
             function setHash(i_, v_) {
-                let p := add(mload(0x40), shl(2, i_))
-                mstore(p, xor(mload(p), shl(224, xor(shr(224, mload(p)), v_))))
+                let p_ := add(mload(0x40), shl(2, i_))
+                mstore(p_, xor(mload(p_), shl(224, xor(shr(224, mload(p_)), v_))))
             }
             function getHash(i_) -> _h {
                 _h := shr(224, mload(add(mload(0x40), shl(2, i_))))
@@ -70,8 +70,9 @@ library LibZip {
                 setHash(hash(u24(ip_)), sub(ip_, ipStart_))
                 _ip := add(ip_, 1)
             }
-            codecopy(mload(0x40), codesize(), 0x8000) // Zeroize the hashmap.
-            let op := add(mload(0x40), 0x8000)
+            result := mload(0x40)
+            codecopy(result, codesize(), 0x8000) // Zeroize the hashmap.
+            let op := add(result, 0x8000)
             let a := add(data, 0x20)
             let ipStart := a
             let ipLimit := sub(add(ipStart, mload(data)), 13)
@@ -92,20 +93,17 @@ library LibZip {
                 ip := sub(ip, 1)
                 if gt(ip, a) { op := literals(sub(ip, a), a, op) }
                 let l := cmp(add(r, 3), add(ip, 3), add(ipLimit, 9))
-                op := match(l, d, op)
+                op := mt(l, d, op)
                 ip := setNextHash(setNextHash(add(ip, l), ipStart), ipStart)
                 a := ip
             }
-            op := literals(sub(add(ipStart, mload(data)), a), a, op)
-            result := mload(0x40)
-            let t := add(result, 0x8000)
-            let n := sub(op, t)
-            mstore(result, n) // Store the length.
             // Copy the result to compact the memory, overwriting the hashmap.
+            let end := sub(literals(sub(add(ipStart, mload(data)), a), a, op), 0x7fe0)
             let o := add(result, 0x20)
-            for { let i } lt(i, n) { i := add(i, 0x20) } { mstore(add(o, i), mload(add(t, i))) }
-            mstore(add(o, n), 0) // Zeroize the slot after the string.
-            mstore(0x40, add(add(o, n), 0x20)) // Allocate the memory.
+            mstore(result, sub(end, o)) // Store the length.
+            for {} iszero(gt(o, end)) { o := add(o, 0x20) } { mstore(o, mload(add(o, 0x7fe0))) }
+            mstore(end, 0) // Zeroize the slot after the string.
+            mstore(0x40, add(end, 0x20)) // Allocate the memory.
         }
     }
 
@@ -113,40 +111,38 @@ library LibZip {
     function flzDecompress(bytes memory data) internal pure returns (bytes memory result) {
         /// @solidity memory-safe-assembly
         assembly {
-            let n := 0
-            let end := add(add(data, 0x20), mload(data))
             result := mload(0x40)
             let op := add(result, 0x20)
+            let end := add(add(data, 0x20), mload(data))
             for { data := add(data, 0x20) } lt(data, end) {} {
                 let w := mload(data)
                 let c := byte(0, w)
                 let t := shr(5, c)
                 if iszero(t) {
-                    mstore(add(op, n), mload(add(data, 1)))
+                    mstore(op, mload(add(data, 1)))
                     data := add(data, add(2, c))
-                    n := add(n, add(1, c))
+                    op := add(op, add(1, c))
                     continue
                 }
-                let g := eq(t, 7)
-                let l := add(2, xor(t, mul(g, xor(t, add(7, byte(1, w))))))
                 for {
-                    let s := add(add(shl(8, and(0x1f, c)), byte(add(1, g), w)), 1)
-                    let r := add(op, sub(n, s))
-                    let o := add(op, n)
+                    let g := eq(t, 7)
+                    let l := add(2, xor(t, mul(g, xor(t, add(7, byte(1, w)))))) // M
+                    let s := add(add(shl(8, and(0x1f, c)), byte(add(1, g), w)), 1) // R
+                    let r := sub(op, s)
                     let f := xor(s, mul(gt(s, 0x20), xor(s, 0x20)))
                     let j := 0
                 } 1 {} {
-                    mstore(add(o, j), mload(add(r, j)))
+                    mstore(add(op, j), mload(add(r, j)))
                     j := add(j, f)
-                    if iszero(lt(j, l)) { break }
+                    if lt(j, l) { continue }
+                    data := add(data, add(2, g))
+                    op := add(op, l)
+                    break
                 }
-                data := add(data, add(2, g))
-                n := add(n, l)
             }
-            mstore(result, n) // Store the length.
-            let o := add(add(result, 0x20), n)
-            mstore(o, 0) // Zeroize the slot after the string.
-            mstore(0x40, add(o, 0x20)) // Allocate the memory.
+            mstore(result, sub(op, add(result, 0x20))) // Store the length.
+            mstore(op, 0) // Zeroize the slot after the string.
+            mstore(0x40, add(op, 0x20)) // Allocate the memory.
         }
     }
 
@@ -243,10 +239,10 @@ library LibZip {
         }
     }
 
-    /// @dev To be called in the `receive` and `fallback` functions.
+    /// @dev To be called in the `fallback` function.
     /// ```
-    ///     receive() external payable { LibZip.cdFallback(); }
     ///     fallback() external payable { LibZip.cdFallback(); }
+    ///     receive() external payable {} // Silence compiler warning to add a `receive` function.
     /// ```
     /// For efficiency, this function will directly return the results, terminating the context.
     /// If called internally, it must be called at the end of the function.

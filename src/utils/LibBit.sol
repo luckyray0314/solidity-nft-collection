@@ -21,8 +21,9 @@ library LibBit {
             r := or(r, shl(5, lt(0xffffffff, shr(r, x))))
             r := or(r, shl(4, lt(0xffff, shr(r, x))))
             r := or(r, shl(3, lt(0xff, shr(r, x))))
-            r := or(r, shl(2, lt(0xf, shr(r, x))))
-            r := or(r, byte(shr(r, x), hex"00000101020202020303030303030303"))
+            // forgefmt: disable-next-item
+            r := or(r, byte(and(0x1f, shr(shr(r, x), 0x8421084210842108cc6318c6db6d54be)),
+                0x0706060506020504060203020504030106050205030304010505030400000000))
         }
     }
 
@@ -37,10 +38,9 @@ library LibBit {
             r := or(r, shl(5, lt(0xffffffff, shr(r, x))))
             r := or(r, shl(4, lt(0xffff, shr(r, x))))
             r := or(r, shl(3, lt(0xff, shr(r, x))))
-            r := or(r, shl(2, lt(0xf, shr(r, x))))
             // forgefmt: disable-next-item
-            r := add(iszero(x), xor(255,
-                or(r, byte(shr(r, x), hex"00000101020202020303030303030303"))))
+            r := add(xor(r, byte(and(0x1f, shr(shr(r, x), 0x8421084210842108cc6318c6db6d54be)),
+                0xf8f9f9faf9fdfafbf9fdfcfdfafbfcfef9fafdfafcfcfbfefafafcfbffffffff)), iszero(x))
         }
     }
 
@@ -54,15 +54,16 @@ library LibBit {
         /// @solidity memory-safe-assembly
         assembly {
             // Isolate the least significant bit.
-            let b := and(x, add(not(x), 1))
-
-            r := or(shl(8, iszero(x)), shl(7, lt(0xffffffffffffffffffffffffffffffff, b)))
-            r := or(r, shl(6, lt(0xffffffffffffffff, shr(r, b))))
-            r := or(r, shl(5, lt(0xffffffff, shr(r, b))))
-
-            // For the remaining 32 bits, use a De Bruijn lookup.
+            x := and(x, add(not(x), 1))
+            // For the upper 3 bits of the result, use a De Bruijn-like lookup.
+            // Credit to adhusson: https://blog.adhusson.com/cheap-find-first-set-evm/
             // forgefmt: disable-next-item
-            r := or(r, byte(and(div(0xd76453e0, shr(r, b)), 0x1f),
+            r := shl(5, shr(252, shl(shl(2, shr(250, mul(x,
+                0xb6db6db6ddddddddd34d34d349249249210842108c6318c639ce739cffffffff))),
+                0x8040405543005266443200005020610674053026020000107506200176117077)))
+            // For the lower 5 bits of the result, use a De Bruijn lookup.
+            // forgefmt: disable-next-item
+            r := or(r, byte(and(div(0xd76453e0, shr(r, x)), 0x1f),
                 0x001f0d1e100c1d070f090b19131c1706010e11080a1a141802121b1503160405))
         }
     }
@@ -91,33 +92,28 @@ library LibBit {
 
     /// @dev Returns `x` reversed at the bit level.
     function reverseBits(uint256 x) internal pure returns (uint256 r) {
-        /// @solidity memory-safe-assembly
-        assembly {
-            // Computing masks on-the-fly reduces bytecode size by about 500 bytes.
-            let m := not(0)
-            r := x
-            for { let s := 128 } 1 {} {
-                m := xor(m, shl(s, m))
-                r := or(and(shr(s, r), m), and(shl(s, r), not(m)))
-                s := shr(1, s)
-                if iszero(s) { break }
-            }
-        }
+        uint256 m0 = 0x0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f;
+        uint256 m1 = m0 ^ (m0 << 2);
+        uint256 m2 = m1 ^ (m1 << 1);
+        r = reverseBytes(x);
+        r = (m2 & (r >> 1)) | ((m2 & r) << 1);
+        r = (m1 & (r >> 2)) | ((m1 & r) << 2);
+        r = (m0 & (r >> 4)) | ((m0 & r) << 4);
     }
 
     /// @dev Returns `x` reversed at the byte level.
     function reverseBytes(uint256 x) internal pure returns (uint256 r) {
-        /// @solidity memory-safe-assembly
-        assembly {
+        unchecked {
             // Computing masks on-the-fly reduces bytecode size by about 200 bytes.
-            let m := not(0)
-            r := x
-            for { let s := 128 } 1 {} {
-                m := xor(m, shl(s, m))
-                r := or(and(shr(s, r), m), and(shl(s, r), not(m)))
-                s := shr(1, s)
-                if eq(s, 4) { break }
-            }
+            uint256 m0 = 0x100000000000000000000000000000001 * (~toUint(x == 0) >> 192);
+            uint256 m1 = m0 ^ (m0 << 32);
+            uint256 m2 = m1 ^ (m1 << 16);
+            uint256 m3 = m2 ^ (m2 << 8);
+            r = (m3 & (x >> 8)) | ((m3 & x) << 8);
+            r = (m2 & (r >> 16)) | ((m2 & r) << 16);
+            r = (m1 & (r >> 32)) | ((m1 & r) << 32);
+            r = (m0 & (r >> 64)) | ((m0 & r) << 64);
+            r = (r >> 128) | (r << 128);
         }
     }
 

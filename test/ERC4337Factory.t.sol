@@ -7,7 +7,7 @@ import {ERC4337Factory} from "../src/accounts/ERC4337Factory.sol";
 import {LibClone} from "../src/utils/LibClone.sol";
 
 contract ERC4337FactoryTest is SoladyTest {
-    address internal constant _ENTRY_POINT = 0x5FF137D4b0FDCD49DcA30c7CF57E578a026d2789;
+    address internal constant _ENTRY_POINT = 0x0000000071727De22E5E9d8BAf0edAc6f37da032;
 
     ERC4337Factory factory;
 
@@ -20,24 +20,6 @@ contract ERC4337FactoryTest is SoladyTest {
         factory = new ERC4337Factory(address(erc4337));
     }
 
-    function testDeploy() public {
-        vm.deal(address(this), 100 ether);
-        address account = factory.deploy{value: 100 ether}(address(0xABCD));
-        _checkImplementationSlot(account, address(erc4337));
-        assertEq(MockERC4337(payable(account)).owner(), address(0xABCD));
-        assertEq(account.balance, 100 ether);
-    }
-
-    function testDeploy(uint256) public {
-        vm.deal(address(this), 100 ether);
-        address owner = _randomNonZeroAddress();
-        uint256 initialValue = _random() % 100 ether;
-        address account = factory.deploy{value: initialValue}(owner);
-        assertEq(address(account).balance, initialValue);
-        assertEq(MockERC4337(payable(account)).owner(), owner);
-        _checkImplementationSlot(account, address(erc4337));
-    }
-
     function testDeployDeterministic(uint256) public {
         vm.deal(address(this), 100 ether);
         address owner = _randomNonZeroAddress();
@@ -46,21 +28,44 @@ contract ERC4337FactoryTest is SoladyTest {
         address account;
         if (uint256(salt) >> 96 != uint160(owner) && uint256(salt) >> 96 != 0) {
             vm.expectRevert(LibClone.SaltDoesNotStartWith.selector);
-            account = factory.deployDeterministic{value: initialValue}(owner, salt);
+            account = factory.createAccount{value: initialValue}(owner, salt);
             return;
         } else {
-            account = factory.deployDeterministic{value: initialValue}(owner, salt);
+            account = factory.createAccount{value: initialValue}(owner, salt);
         }
         assertEq(address(account).balance, initialValue);
         assertEq(MockERC4337(payable(account)).owner(), owner);
         _checkImplementationSlot(account, address(erc4337));
     }
 
-    function testDeployDeterministicRevertWithDeploymentFailed() public {
+    function testCreateAccountRepeatedDeployment() public {
         bytes32 salt = bytes32(_random() & uint256(type(uint96).max));
-        factory.deployDeterministic(address(0xABCD), salt);
-        vm.expectRevert(LibClone.DeploymentFailed.selector);
-        factory.deployDeterministic(address(0xABCD), salt);
+        address expectedInstance = factory.getAddress(salt);
+        address instance = factory.createAccount{value: 123}(address(0xABCD), salt);
+        assertEq(instance.balance, 123);
+        assertEq(factory.createAccount{value: 456}(address(0xABCD), salt), instance);
+        assertEq(factory.createAccount(address(0xABCD), salt), instance);
+        assertEq(instance.balance, 123 + 456);
+        assertEq(expectedInstance, instance);
+    }
+
+    function testCreateAccountRepeatedDeployment(uint256) public {
+        address owner = _randomNonZeroAddress();
+        bytes32 salt =
+            bytes32((_random() & uint256(type(uint96).max)) | (uint256(uint160(owner)) << 96));
+        address expectedInstance = factory.getAddress(salt);
+        address notOwner = _randomNonZeroAddress();
+        while (owner == notOwner) notOwner = _randomNonZeroAddress();
+        vm.expectRevert(LibClone.SaltDoesNotStartWith.selector);
+        factory.createAccount{value: 123}(notOwner, salt);
+        address instance = factory.createAccount{value: 123}(owner, salt);
+        assertEq(instance.balance, 123);
+        vm.expectRevert(LibClone.SaltDoesNotStartWith.selector);
+        factory.createAccount{value: 123}(notOwner, salt);
+        assertEq(factory.createAccount{value: 456}(owner, salt), instance);
+        assertEq(factory.createAccount(owner, salt), instance);
+        assertEq(instance.balance, 123 + 456);
+        assertEq(expectedInstance, instance);
     }
 
     function _checkImplementationSlot(address proxy, address implementation_) internal {

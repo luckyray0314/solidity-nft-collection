@@ -16,7 +16,7 @@ To install with [**Foundry**](https://github.com/gakonst/foundry):
 forge install vectorized/solady
 ```
 
-To install with [**Hardhat**](https://github.com/nomiclabs/hardhat) or [**Truffle**](https://github.com/trufflesuite/truffle):
+To install with [**Hardhat**](https://github.com/nomiclabs/hardhat):
 
 ```sh
 npm install solady
@@ -29,10 +29,12 @@ The Solidity smart contracts are located in the `src` directory.
 ```ml
 accounts
 ├─ Receiver — "Receiver mixin for ETH and safe-transferred ERC721 and ERC1155 tokens"
+├─ ERC1271 — "ERC1271 mixin with nested EIP-712 approach"
 ├─ ERC4337 — "Simple ERC4337 account implementation"
 ├─ ERC4337Factory — "Simple ERC4337 account factory implementation"
 ├─ ERC6551 — "Simple ERC6551 account implementation"
-├─ ERC6551Proxy — "Simple ERC6551 account proxy implementation"
+├─ ERC6551Proxy — "Relay proxy for upgradeable ERC6551 accounts"
+├─ LibERC6551 — "Library for interacting with ERC6551 accounts"
 auth
 ├─ Ownable — "Simple single owner authorization mixin"
 ├─ OwnableRoles — "Simple single owner and multiroles authorization mixin"
@@ -48,7 +50,9 @@ utils
 ├─ MerkleProofLib — "Library for verification of Merkle proofs"
 ├─ SignatureCheckerLib — "Library for verification of ECDSA and ERC1271 signatures"
 ├─ ECDSA — "Library for verification of ECDSA signatures"
+├─ P256 — "Gas optimized P256 wrapper"
 ├─ EIP712 — "Contract for EIP-712 typed structured data hashing and signing"
+├─ DeploylessPredeployQueryer — "Deployless queryer for predeploys"
 ├─ ERC1967Factory — "Factory for deploying and managing ERC1967 proxy contracts"
 ├─ ERC1967FactoryConstants — "The address and bytecode of the canonical ERC1967Factory"
 ├─ JSONParserLib — "Library for parsing JSONs"
@@ -62,13 +66,18 @@ utils
 ├─ LibZip — "Library for compressing and decompressing bytes"
 ├─ Clone — "Class with helper read functions for clone with immutable args"
 ├─ LibClone — "Minimal proxy library"
+├─ Initializable — "Initializable mixin for the upgradeable contracts"
 ├─ UUPSUpgradeable — "UUPS proxy mixin"
+├─ UpgradeableBeacon — "Upgradeable beacon for ERC1967 beacon proxies"
 ├─ LibString — "Library for converting numbers into strings and other string operations"
 ├─ LibBitmap — "Library for storage of packed booleans"
 ├─ LibMap — "Library for storage of packed unsigned integers"
-├─ MinHeapLib — "Library for managing a min-heap in storage"
+├─ EnumerableSetLib — "Library for managing enumerable sets in storage"
+├─ MinHeapLib — "Library for managing a min-heap in storage or memory"
 ├─ RedBlackTreeLib — "Library for managing a red-black-tree in storage"
+├─ ReentrancyGuard — "Reentrancy guard mixin"
 ├─ Multicallable — "Contract that enables a single call to call multiple methods on itself"
+├─ GasBurnerLib — "Library for burning gas without reverting"
 ├─ SafeTransferLib — "Safe ERC20/ETH transfer lib that handles missing return values"
 ├─ DynamicBufferLib — "Library for buffers with automatic capacity resizing"
 ├─ MetadataReaderLib — "Library for reading contract metadata robustly"
@@ -134,5 +143,5 @@ This repository is inspired by or directly modified from many sources, primarily
 [ci-shield]: https://img.shields.io/github/actions/workflow/status/vectorized/solady/ci.yml?branch=main&label=build
 [ci-url]: https://github.com/vectorized/solady/actions/workflows/ci.yml
 
-[solidity-shield]: https://img.shields.io/badge/solidity-%3E=0.8.4%20%3C=0.8.21-aa6746
+[solidity-shield]: https://img.shields.io/badge/solidity-%3E=0.8.4%20%3C=0.8.25-aa6746
 [solidity-ci-url]: https://github.com/Vectorized/solady/actions/workflows/ci-all-via-ir.yml

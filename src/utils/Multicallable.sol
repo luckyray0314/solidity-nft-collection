@@ -4,6 +4,19 @@ pragma solidity ^0.8.4;
 /// @notice Contract that enables a single call to call multiple methods on itself.
 /// @author Solady (https://github.com/vectorized/solady/blob/main/src/utils/Multicallable.sol)
 /// @author Modified from Solmate (https://github.com/transmissions11/solmate/blob/main/src/utils/Multicallable.sol)
+///
+/// WARNING:
+/// This implementation is NOT to be used with ERC2771 out-of-the-box.
+/// https://blog.openzeppelin.com/arbitrary-address-spoofing-vulnerability-erc2771context-multicall-public-disclosure
+/// This also applies to potentially other ERCs / patterns appending to the back of calldata.
+///
+/// We do NOT have a check for ERC2771, as we do not inherit from OpenZeppelin's context.
+/// Moreover, it is infeasible and inefficient for us to add checks and mitigations
+/// for all possible ERC / patterns appending to the back of calldata.
+///
+/// We would highly recommend using an alternative pattern such as
+/// https://github.com/Vectorized/multicaller
+/// which is more flexible, futureproof, and safer by default.
 abstract contract Multicallable {
     /// @dev Apply `DELEGATECALL` with the current contract to each calldata in `data`,
     /// and store the `abi.encode` formatted results of each `DELEGATECALL` into `results`.

@@ -5,34 +5,41 @@ import {Receiver} from "./Receiver.sol";
 import {LibZip} from "../utils/LibZip.sol";
 import {Ownable} from "../auth/Ownable.sol";
 import {UUPSUpgradeable} from "../utils/UUPSUpgradeable.sol";
-import {SignatureCheckerLib} from "../utils/SignatureCheckerLib.sol";
+import {SignatureCheckerLib, ERC1271} from "../accounts/ERC1271.sol";
 
 /// @notice Simple ERC4337 account implementation.
 /// @author Solady (https://github.com/vectorized/solady/blob/main/src/accounts/ERC4337.sol)
 /// @author Infinitism (https://github.com/eth-infinitism/account-abstraction/blob/develop/contracts/samples/SimpleAccount.sol)
 ///
-/// Recommended usage:
+/// @dev Recommended usage:
 /// 1. Deploy the ERC4337 as an implementation contract, and verify it on Etherscan.
 /// 2. Create a factory that uses `LibClone.deployERC1967` or
 ///    `LibClone.deployDeterministicERC1967` to clone the implementation.
 ///    See: `ERC4337Factory.sol`.
-contract ERC4337 is Ownable, UUPSUpgradeable, Receiver {
+///
+/// Note:
+/// ERC4337 is a very complicated standard with many potential gotchas.
+/// Also, it is subject to change and has not been finalized
+/// (so accounts are encouraged to be upgradeable).
+/// Usually, ERC4337 account implementations are developed by companies with ample funds
+/// for security reviews. This implementation is intended to serve as a base reference
+/// for smart account developers working in such companies. If you are using this
+/// implementation, please do get one or more security reviews before deployment.
+abstract contract ERC4337 is Ownable, UUPSUpgradeable, Receiver, ERC1271 {
     /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
     /*                          STRUCTS                           */
     /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-    /// @dev The ERC4337 user operation (userOp) struct.
-    struct UserOperation {
+    /// @dev The packed ERC4337 user operation (userOp) struct.
+    struct PackedUserOperation {
         address sender;
         uint256 nonce;
-        bytes initCode;
+        bytes initCode; // Factory address and `factoryData` (or empty).
         bytes callData;
-        uint256 callGasLimit;
-        uint256 verificationGasLimit;
+        bytes32 accountGasLimits; // `verificationGas` (16 bytes) and `callGas` (16 bytes).
         uint256 preVerificationGas;
-        uint256 maxFeePerGas;
-        uint256 maxPriorityFeePerGas;
-        bytes paymasterAndData;
+        bytes32 gasFees; // `maxPriorityFee` (16 bytes) and `maxFeePerGas` (16 bytes).
+        bytes paymasterAndData; // Paymaster fields (or empty).
         bytes signature;
     }
 
@@ -41,6 +48,32 @@ contract ERC4337 is Ownable, UUPSUpgradeable, Receiver {
         address target;
         uint256 value;
         bytes data;
+    }
+
+    /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+    /*                       CUSTOM ERRORS                        */
+    /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+    /// @dev The function selector is not recognized.
+    error FnSelectorNotRecognized();
+
+    /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+    /*                        CONSTRUCTOR                         */
+    /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+    /// @dev Deploys this ERC4337 account implementation and disables initialization (see below).
+    constructor() payable {
+        _disableERC4337ImplementationInitializer();
+    }
+
+    /// @dev Automatically initializes the owner for the implementation. This blocks someone
+    /// from initializing the implementation and doing a delegatecall to SELFDESTRUCT.
+    /// Proxies to the implementation will still be able to initialize as per normal.
+    function _disableERC4337ImplementationInitializer() internal virtual {
+        // Note that `Ownable._guardInitializeOwner` has been and must be overridden
+        // to return true, to block double-initialization. We'll initialize to `address(1)`,
+        // so that it's easier to verify that the implementation has been initialized.
+        _initializeOwner(address(1));
     }
 
     /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -56,10 +89,10 @@ contract ERC4337 is Ownable, UUPSUpgradeable, Receiver {
     /*                        ENTRY POINT                         */
     /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-    /// @dev Returns the canonical ERC4337 EntryPoint contract.
+    /// @dev Returns the canonical ERC4337 EntryPoint contract (0.7).
     /// Override this function to return a different EntryPoint.
     function entryPoint() public view virtual returns (address) {
-        return 0x5FF137D4b0FDCD49DcA30c7CF57E578a026d2789;
+        return 0x0000000071727De22E5E9d8BAf0edAc6f37da032;
     }
 
     /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
@@ -75,11 +108,11 @@ contract ERC4337 is Ownable, UUPSUpgradeable, Receiver {
     /// Other failures (e.g. nonce mismatch, or invalid signature format)
     /// should still revert to signal failure.
     function validateUserOp(
-        UserOperation calldata userOp,
+        PackedUserOperation calldata userOp,
         bytes32 userOpHash,
         uint256 missingAccountFunds
     )
-        public
+        external
         payable
         virtual
         onlyEntryPoint
@@ -90,24 +123,8 @@ contract ERC4337 is Ownable, UUPSUpgradeable, Receiver {
         _validateNonce(userOp.nonce);
     }
 
-    /// @dev Validates the signature with ERC1271 return,
-    /// so that this account can also be used as a signer.
-    function isValidSignature(bytes32 hash, bytes calldata signature)
-        public
-        view
-        virtual
-        returns (bytes4 result)
-    {
-        bool success = SignatureCheckerLib.isValidSignatureNowCalldata(owner(), hash, signature);
-        /// @solidity memory-safe-assembly
-        assembly {
-            // `success ? bytes4(keccak256("isValidSignature(bytes32,bytes)")) : 0xffffffff`.
-            result := shl(224, or(0x1626ba7e, sub(0, iszero(success))))
-        }
-    }
-
     /// @dev Validate `userOp.signature` for the `userOpHash`.
-    function _validateSignature(UserOperation calldata userOp, bytes32 userOpHash)
+    function _validateSignature(PackedUserOperation calldata userOp, bytes32 userOpHash)
         internal
         virtual
         returns (uint256 validationData)
@@ -385,13 +402,28 @@ contract ERC4337 is Ownable, UUPSUpgradeable, Receiver {
         return true;
     }
 
+    /// @dev Uses the `owner` as the ERC1271 signer.
+    function _erc1271Signer() internal view virtual override(ERC1271) returns (address) {
+        return owner();
+    }
+
     /// @dev To ensure that only the owner or the account itself can upgrade the implementation.
     function _authorizeUpgrade(address) internal virtual override(UUPSUpgradeable) onlyOwner {}
 
+    /// @dev If you don't need to use `LibZip.cdFallback`, override this function to return false.
+    function _useLibZipCdFallback() internal view virtual returns (bool) {
+        return true;
+    }
+
     /// @dev Handle token callbacks. If no token callback is triggered,
     /// use `LibZip.cdFallback` for generalized calldata decompression.
-    /// If you don't need either, re-override this function.
     fallback() external payable virtual override(Receiver) receiverFallback {
-        LibZip.cdFallback();
+        if (_useLibZipCdFallback()) {
+            // Reverts with out-of-gas by recursing infinitely if the first 4 bytes
+            // of the decompressed `msg.data` doesn't match any function selector.
+            LibZip.cdFallback();
+        } else {
+            revert FnSelectorNotRecognized();
+        }
     }
 }

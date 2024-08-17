@@ -4,13 +4,22 @@ pragma solidity ^0.8.4;
 /// @notice Library for converting numbers into strings and other string operations.
 /// @author Solady (https://github.com/vectorized/solady/blob/main/src/utils/LibString.sol)
 /// @author Modified from Solmate (https://github.com/transmissions11/solmate/blob/main/src/utils/LibString.sol)
+///
+/// @dev Note:
+/// For performance and bytecode compactness, most of the string operations are restricted to
+/// byte strings (7-bit ASCII), except where otherwise specified.
+/// Usage of byte string operations on charsets with runes spanning two or more bytes
+/// can lead to undefined behavior.
 library LibString {
     /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
     /*                        CUSTOM ERRORS                       */
     /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-    /// @dev The `length` of the output is too small to contain all the hex digits.
+    /// @dev The length of the output is too small to contain all the hex digits.
     error HexLengthInsufficient();
+
+    /// @dev The length of the string is more than 32 bytes.
+    error TooBigForSmallString();
 
     /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
     /*                         CONSTANTS                          */
@@ -67,7 +76,7 @@ library LibString {
             return toString(uint256(value));
         }
         unchecked {
-            str = toString(uint256(-value));
+            str = toString(~uint256(value) + 1);
         }
         /// @solidity memory-safe-assembly
         assembly {
@@ -141,9 +150,7 @@ library LibString {
             }
 
             if temp {
-                // Store the function selector of `HexLengthInsufficient()`.
-                mstore(0x00, 0x2194895a)
-                // Revert with (offset, size).
+                mstore(0x00, 0x2194895a) // `HexLengthInsufficient()`.
                 revert(0x1c, 0x04)
             }
 
@@ -403,8 +410,10 @@ library LibString {
     /*                   BYTE STRING OPERATIONS                   */
     /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-    // For performance and bytecode compactness, all indices of the following operations
-    // are byte (ASCII) offsets, not UTF character offsets.
+    // For performance and bytecode compactness, byte string operations are restricted
+    // to 7-bit ASCII strings. All offsets are byte offsets, not UTF character offsets.
+    // Usage of byte string operations on charsets with runes spanning two or more bytes
+    // can lead to undefined behavior.
 
     /// @dev Returns `subject` all occurrences of `search` replaced with `replacement`.
     function replace(string memory subject, string memory search, string memory replacement)
@@ -596,6 +605,11 @@ library LibString {
         returns (uint256 result)
     {
         result = lastIndexOf(subject, search, uint256(int256(-1)));
+    }
+
+    /// @dev Returns true if `search` is found in `subject`, false otherwise.
+    function contains(string memory subject, string memory search) internal pure returns (bool) {
+        return indexOf(subject, search) != NOT_FOUND;
     }
 
     /// @dev Returns whether `subject` starts with `search`.
@@ -900,21 +914,42 @@ library LibString {
     }
 
     /// @dev Returns a string from a small bytes32 string.
-    function fromSmallString(bytes32 smallString) internal pure returns (string memory result) {
-        if (smallString == bytes32(0)) return result;
+    /// `s` must be null-terminated, or behavior will be undefined.
+    function fromSmallString(bytes32 s) internal pure returns (string memory result) {
         /// @solidity memory-safe-assembly
         assembly {
             result := mload(0x40)
-            let n
-            for {} 1 {} {
-                n := add(n, 1)
-                if iszero(byte(n, smallString)) { break } // Scan for '\0'.
-            }
+            let n := 0
+            for {} byte(n, s) { n := add(n, 1) } {} // Scan for '\0'.
             mstore(result, n)
             let o := add(result, 0x20)
-            mstore(o, smallString)
+            mstore(o, s)
             mstore(add(o, n), 0)
             mstore(0x40, add(result, 0x40))
+        }
+    }
+
+    /// @dev Returns the small string, with all bytes after the first null byte zeroized.
+    function normalizeSmallString(bytes32 s) internal pure returns (bytes32 result) {
+        /// @solidity memory-safe-assembly
+        assembly {
+            for {} byte(result, s) { result := add(result, 1) } {} // Scan for '\0'.
+            mstore(0x00, s)
+            mstore(result, 0x00)
+            result := mload(0x00)
+        }
+    }
+
+    /// @dev Returns the string as a normalized null-terminated small string.
+    function toSmallString(string memory s) internal pure returns (bytes32 result) {
+        /// @solidity memory-safe-assembly
+        assembly {
+            result := mload(s)
+            if iszero(lt(result, 33)) {
+                mstore(0x00, 0xec92f9a3) // `TooBigForSmallString()`.
+                revert(0x1c, 0x04)
+            }
+            result := shl(shl(3, sub(32, result)), mload(add(s, result)))
         }
     }
 
@@ -1037,18 +1072,21 @@ library LibString {
         }
     }
 
-    /// @dev Returns whether `a` equals `b`. For short strings up to 32 bytes.
+    /// @dev Returns whether `a` equals `b`, where `b` is a null-terminated small string.
     function eqs(string memory a, bytes32 b) internal pure returns (bool result) {
         /// @solidity memory-safe-assembly
         assembly {
             // These should be evaluated on compile time, as far as possible.
-            let x := and(b, add(not(b), 1))
-            let r := or(shl(8, iszero(b)), shl(7, iszero(iszero(shr(128, x)))))
+            let m := not(shl(7, div(not(iszero(b)), 255))) // `0x7f7f ...`.
+            let x := not(or(m, or(b, add(m, and(b, m)))))
+            let r := shl(7, iszero(iszero(shr(128, x))))
             r := or(r, shl(6, iszero(iszero(shr(64, shr(r, x))))))
             r := or(r, shl(5, lt(0xffffffff, shr(r, x))))
             r := or(r, shl(4, lt(0xffff, shr(r, x))))
             r := or(r, shl(3, lt(0xff, shr(r, x))))
-            result := gt(eq(mload(a), sub(32, shr(3, r))), shr(r, xor(b, mload(add(a, 0x20)))))
+            // forgefmt: disable-next-item
+            result := gt(eq(mload(a), add(iszero(x), xor(31, shr(3, r)))),
+                xor(shr(add(8, r), b), shr(add(8, r), mload(add(a, 0x20)))))
         }
     }
 
@@ -1072,7 +1110,7 @@ library LibString {
 
     /// @dev Unpacks a string packed using {packOne}.
     /// Returns the empty string if `packed` is `bytes32(0)`.
-    /// If `packed` is not an output of {packOne}, the output behaviour is undefined.
+    /// If `packed` is not an output of {packOne}, the output behavior is undefined.
     function unpackOne(bytes32 packed) internal pure returns (string memory result) {
         /// @solidity memory-safe-assembly
         assembly {
@@ -1113,7 +1151,7 @@ library LibString {
 
     /// @dev Unpacks strings packed using {packTwo}.
     /// Returns the empty strings if `packed` is `bytes32(0)`.
-    /// If `packed` is not an output of {packTwo}, the output behaviour is undefined.
+    /// If `packed` is not an output of {packTwo}, the output behavior is undefined.
     function unpackTwo(bytes32 packed)
         internal
         pure
@@ -1143,14 +1181,14 @@ library LibString {
         assembly {
             // Assumes that the string does not start from the scratch space.
             let retStart := sub(a, 0x20)
-            let retSize := add(mload(a), 0x40)
+            let retUnpaddedSize := add(mload(a), 0x40)
             // Right pad with zeroes. Just in case the string is produced
             // by a method that doesn't zero right pad.
-            mstore(add(retStart, retSize), 0)
+            mstore(add(retStart, retUnpaddedSize), 0)
             // Store the return offset.
             mstore(retStart, 0x20)
             // End the transaction, returning the string.
-            return(retStart, retSize)
+            return(retStart, and(not(0x1f), add(0x1f, retUnpaddedSize)))
         }
     }
 }

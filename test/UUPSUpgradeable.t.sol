@@ -7,8 +7,6 @@ import {LibClone} from "../src/utils/LibClone.sol";
 import {MockUUPSImplementation} from "../test/utils/mocks/MockUUPSImplementation.sol";
 
 contract UUPSUpgradeableTest is SoladyTest {
-    error UpgradeFailed();
-
     MockUUPSImplementation impl1;
 
     address proxy;
@@ -24,11 +22,22 @@ contract UUPSUpgradeableTest is SoladyTest {
         MockUUPSImplementation(proxy).initialize(address(this));
     }
 
+    function testNotDelegatedGuard() public {
+        assertEq(impl1.proxiableUUID(), _ERC1967_IMPLEMENTATION_SLOT);
+        vm.expectRevert(UUPSUpgradeable.UnauthorizedCallContext.selector);
+        MockUUPSImplementation(proxy).proxiableUUID();
+    }
+
+    function testOnlyProxyGuard() public {
+        vm.expectRevert(UUPSUpgradeable.UnauthorizedCallContext.selector);
+        impl1.upgradeToAndCall(address(1), bytes(""));
+    }
+
     function testUpgradeTo() public {
         MockUUPSImplementation impl2 = new MockUUPSImplementation();
         vm.expectEmit(true, true, true, true);
         emit Upgraded(address(impl2));
-        MockUUPSImplementation(proxy).upgradeTo(address(impl2));
+        MockUUPSImplementation(proxy).upgradeToAndCall(address(impl2), bytes(""));
         bytes32 v = vm.load(proxy, _ERC1967_IMPLEMENTATION_SLOT);
         assertEq(address(uint160(uint256(v))), address(impl2));
     }
@@ -36,12 +45,12 @@ contract UUPSUpgradeableTest is SoladyTest {
     function testUpgradeToRevertWithUnauthorized() public {
         vm.prank(address(0xBEEF));
         vm.expectRevert(MockUUPSImplementation.Unauthorized.selector);
-        MockUUPSImplementation(proxy).upgradeTo(address(0xABCD));
+        MockUUPSImplementation(proxy).upgradeToAndCall(address(0xABCD), bytes(""));
     }
 
     function testUpgradeToRevertWithUpgradeFailed() public {
-        vm.expectRevert(UpgradeFailed.selector);
-        MockUUPSImplementation(proxy).upgradeTo(address(0xABCD));
+        vm.expectRevert(UUPSUpgradeable.UpgradeFailed.selector);
+        MockUUPSImplementation(proxy).upgradeToAndCall(address(0xABCD), bytes(""));
     }
 
     function testUpgradeToAndCall() public {
@@ -54,7 +63,7 @@ contract UUPSUpgradeableTest is SoladyTest {
     }
 
     function testUpgradeToAndCallRevertWithUpgradeFailed() public {
-        vm.expectRevert(UpgradeFailed.selector);
+        vm.expectRevert(UUPSUpgradeable.UpgradeFailed.selector);
         MockUUPSImplementation(proxy).upgradeToAndCall(address(0xABCD), "");
     }
 
